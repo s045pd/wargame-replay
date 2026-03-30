@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { usePlayback } from './store/playback';
+import { useDirector } from './store/director';
 import { fetchGames, fetchMeta, GameInfo } from './lib/api';
 import { MapView } from './map/MapView';
 import { RelativeCanvas } from './map/RelativeCanvas';
 import { Timeline } from './timeline/Timeline';
+import { DirectorPanel } from './director/DirectorPanel';
 
 export default function App() {
   const { gameId, setGame, connectWs, units, coordMode } = usePlayback();
+  const { mode, setMode } = useDirector();
   const [games, setGames] = useState<GameInfo[]>([]);
 
   useEffect(() => {
@@ -24,6 +27,20 @@ export default function App() {
       connectWs();
     }
   }, [gameId, connectWs]);
+
+  // Tab key toggles between Replay and Director mode
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setMode(mode === 'replay' ? 'director' : 'replay');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, setMode]);
 
   if (!gameId) {
     return (
@@ -48,13 +65,17 @@ export default function App() {
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <TopBar />
-      <div className="flex-1 relative">
-        {coordMode === 'wgs84' ? (
-          <MapView units={units} />
-        ) : (
-          <RelativeCanvas units={units} />
-        )}
-      </div>
+      {mode === 'director' ? (
+        <DirectorPanel />
+      ) : (
+        <div className="flex-1 relative">
+          {coordMode === 'wgs84' ? (
+            <MapView units={units} />
+          ) : (
+            <RelativeCanvas units={units} />
+          )}
+        </div>
+      )}
       <Timeline />
     </div>
   );

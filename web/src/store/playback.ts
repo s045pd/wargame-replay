@@ -29,6 +29,7 @@ interface PlaybackState {
 
   // Actions
   setGame: (gameId: string, meta: GameMeta) => void;
+  resetGame: () => void;
   connectWs: () => void;
   disconnectWs: () => void;
   play: (speed?: number) => void;
@@ -63,6 +64,21 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     coordMode: meta.coordMode as 'wgs84' | 'relative',
     currentTs: meta.startTime,
   }),
+
+  resetGame: () => {
+    get().ws?.disconnect();
+    set({
+      gameId: null,
+      meta: null,
+      connected: false,
+      ws: null,
+      currentTs: '',
+      playing: false,
+      units: [],
+      events: [],
+      hotspot: undefined,
+    });
+  },
 
   connectWs: () => {
     const { gameId } = get();

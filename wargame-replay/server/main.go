@@ -29,6 +29,10 @@ func main() {
 	r.GET("/api/games/:id/meta", handler.GetMeta)
 	r.GET("/api/games/:id/frame/:ts", handler.GetFrame)
 	r.GET("/api/games/:id/hotspots", handler.GetHotspots)
+	r.GET("/api/games/:id/bookmarks", handler.ListBookmarks)
+	r.POST("/api/games/:id/bookmarks", handler.CreateBookmark)
+	r.DELETE("/api/games/:id/bookmarks/:idx", handler.DeleteBookmark)
+	r.GET("/api/games/:id/bookmarks/suggest", handler.SuggestBookmarks)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)

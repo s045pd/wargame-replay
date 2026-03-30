@@ -4,6 +4,7 @@ import { usePlayback } from './store/playback';
 import { fetchGames, fetchMeta, GameInfo } from './lib/api';
 import { MapView } from './map/MapView';
 import { RelativeCanvas } from './map/RelativeCanvas';
+import { Timeline } from './timeline/Timeline';
 
 export default function App() {
   const { gameId, setGame, connectWs, units, coordMode } = usePlayback();
@@ -54,7 +55,7 @@ export default function App() {
           <RelativeCanvas units={units} />
         )}
       </div>
-      {/* Timeline will go here (Task 11) */}
+      <Timeline />
     </div>
   );
 }

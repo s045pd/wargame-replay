@@ -4,11 +4,13 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { UnitPosition } from '../lib/api';
 import { UnitLayer } from './UnitLayer';
 import { MAP_STYLES } from './styles';
+import { TargetCamera } from '../store/director';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || 'YOUR_MAPBOX_TOKEN_HERE';
 
 interface MapViewProps {
   units: UnitPosition[];
+  targetCamera?: TargetCamera | null;
 }
 
 function computeBounds(units: UnitPosition[]): mapboxgl.LngLatBoundsLike | null {
@@ -35,7 +37,7 @@ function computeBounds(units: UnitPosition[]): mapboxgl.LngLatBoundsLike | null 
   ];
 }
 
-export function MapView({ units }: MapViewProps) {
+export function MapView({ units, targetCamera }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -103,6 +105,18 @@ export function MapView({ units }: MapViewProps) {
       fittedRef.current = true;
     }
   }, [units, mapReady]);
+
+  // Fly to director target camera
+  useEffect(() => {
+    if (!mapRef.current || !mapReady || !targetCamera) return;
+    if (targetCamera.lng !== undefined && targetCamera.lat !== undefined) {
+      mapRef.current.flyTo({
+        center: [targetCamera.lng, targetCamera.lat],
+        zoom: targetCamera.zoom ?? 8,
+        duration: 1500,
+      });
+    }
+  }, [targetCamera, mapReady]);
 
   return (
     <div className="absolute inset-0">

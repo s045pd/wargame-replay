@@ -9,13 +9,24 @@ const MAP_STYLE_LABELS: Record<MapStyleKey, string> = {
 };
 
 export function TopBar() {
-  const { meta, coordMode, mapStyle, setMapStyle, trailEnabled, setTrailEnabled } = usePlayback();
+  const { meta, coordMode, mapStyle, setMapStyle, trailEnabled, setTrailEnabled, resetGame } = usePlayback();
   const { mode, setMode } = useDirector();
 
   const isGeoMode = coordMode === 'wgs84';
 
   return (
     <div className="h-12 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-4">
+      <button
+        onClick={resetGame}
+        className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-100 transition-colors"
+        title="Back to game list"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Games
+      </button>
+      <div className="h-4 w-px bg-zinc-700" />
       <div className="text-sm font-bold text-zinc-100 tracking-wider">
         WARGAME REPLAY
       </div>

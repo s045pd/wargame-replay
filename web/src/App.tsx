@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { usePlayback } from './store/playback';
 import { fetchGames, fetchMeta, GameInfo } from './lib/api';
+import { MapView } from './map/MapView';
+import { RelativeCanvas } from './map/RelativeCanvas';
 
 export default function App() {
-  const { gameId, setGame, connectWs } = usePlayback();
+  const { gameId, setGame, connectWs, units, coordMode } = usePlayback();
   const [games, setGames] = useState<GameInfo[]>([]);
 
   useEffect(() => {
@@ -14,7 +16,6 @@ export default function App() {
   const selectGame = async (g: GameInfo) => {
     const meta = await fetchMeta(g.id);
     setGame(g.id, meta);
-    // Will connect WS in next effect
   };
 
   useEffect(() => {
@@ -47,10 +48,11 @@ export default function App() {
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <TopBar />
       <div className="flex-1 relative">
-        {/* Map view will go here (Task 10) */}
-        <div className="absolute inset-0 flex items-center justify-center text-zinc-600">
-          Map Loading...
-        </div>
+        {coordMode === 'wgs84' ? (
+          <MapView units={units} />
+        ) : (
+          <RelativeCanvas units={units} />
+        )}
       </div>
       {/* Timeline will go here (Task 11) */}
     </div>

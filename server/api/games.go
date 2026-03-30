@@ -40,6 +40,16 @@ func (h *Handler) GetMeta(c *gin.Context) {
 	c.JSON(http.StatusOK, svc.Meta())
 }
 
+// GetHotspots returns the full precomputed hotspot timeline for a game.
+func (h *Handler) GetHotspots(c *gin.Context) {
+	svc, err := h.GetService(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, svc.Hotspots())
+}
+
 func (h *Handler) GetService(gameID string) (*game.Service, error) {
 	if svc, ok := h.services[gameID]; ok {
 		return svc, nil

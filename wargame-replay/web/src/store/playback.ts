@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { GameMeta, UnitPosition, Frame } from '../lib/api';
 import { GameWebSocket } from '../lib/ws';
+import { MapStyleKey } from '../map/styles';
 
 interface PlaybackState {
   // Connection
@@ -20,6 +21,12 @@ interface PlaybackState {
   events: unknown[];
   hotspot: Frame['hotspot'];
 
+  // Map UI state
+  mapStyle: MapStyleKey;
+  trailEnabled: boolean;
+  selectedUnitId: number | null;
+  followSelectedUnit: boolean;
+
   // Actions
   setGame: (gameId: string, meta: GameMeta) => void;
   connectWs: () => void;
@@ -28,6 +35,10 @@ interface PlaybackState {
   pause: () => void;
   seek: (ts: string) => void;
   setSpeed: (speed: number) => void;
+  setMapStyle: (style: MapStyleKey) => void;
+  setTrailEnabled: (enabled: boolean) => void;
+  setSelectedUnitId: (id: number | null) => void;
+  setFollowSelectedUnit: (follow: boolean) => void;
 }
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
@@ -42,6 +53,10 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   units: [],
   events: [],
   hotspot: undefined,
+  mapStyle: 'dark',
+  trailEnabled: true,
+  selectedUnitId: null,
+  followSelectedUnit: false,
 
   setGame: (gameId, meta) => set({
     gameId, meta,
@@ -101,4 +116,9 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     }
     set({ speed });
   },
+
+  setMapStyle: (style) => set({ mapStyle: style }),
+  setTrailEnabled: (enabled) => set({ trailEnabled: enabled }),
+  setSelectedUnitId: (id) => set({ selectedUnitId: id }),
+  setFollowSelectedUnit: (follow) => set({ followSelectedUnit: follow }),
 }));

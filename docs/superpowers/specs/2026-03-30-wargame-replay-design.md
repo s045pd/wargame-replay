@@ -214,6 +214,10 @@ Go Server 启动
 }
 ```
 
+**play 重复发送**: 若服务端已在播放中收到 `play`，仅作为速度变更处理，不重置播放位置。若 `speed` 字段省略则保持当前速度。
+
+**coordMode 一致性**: WebSocket `state` 消息中的 `coordMode` 始终与 REST `meta` 接口返回值一致。客户端可使用任一来源，WebSocket 值足以避免额外请求。
+
 **断线重连**: 客户端重连后收到新的 `state` 消息（初始暂停状态），需重新发送 `seek` + `play` 恢复。
 
 ### 缓存策略
@@ -306,6 +310,13 @@ type HotRegion struct {
     Score     float32          // 热度评分
     Radius    float32          // 覆盖半径 (米)
     Camera    CameraPreset     // 推荐机位参数
+}
+type CameraPreset struct {
+    Lat     float64            // 镜头中心纬度
+    Lng     float64            // 镜头中心经度
+    Zoom    float32            // Mapbox zoom level (0-22)
+    Bearing float32            // 方位角 (0-360°, 0=北)
+    Pitch   float32            // 俯仰角 (0-60°, 0=正俯视)
 }
 ```
 

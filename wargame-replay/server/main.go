@@ -28,6 +28,7 @@ func main() {
 	r.GET("/api/games", handler.ListGames)
 	r.GET("/api/games/:id/meta", handler.GetMeta)
 	r.GET("/api/games/:id/frame/:ts", handler.GetFrame)
+	r.GET("/api/games/:id/hotspots", handler.GetHotspots)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)

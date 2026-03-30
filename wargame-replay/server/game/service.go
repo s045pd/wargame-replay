@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"wargame-replay/server/decoder"
+	"wargame-replay/server/hotspot"
 	"wargame-replay/server/index"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -44,6 +46,8 @@ type Service struct {
 	resolver decoder.CoordResolver
 	players  map[int]string
 	meta     GameMeta
+	dbPath   string
+	hotspots []hotspot.HotspotFrame
 }
 
 const cacheMaxBytes = 100 * 1024 * 1024 // 100MB
@@ -74,6 +78,7 @@ func LoadGame(dbPath string) (*Service, error) {
 		cache:    index.NewLRUCache(cacheMaxBytes),
 		resolver: resolver,
 		players:  players,
+		dbPath:   dbPath,
 		meta: GameMeta{
 			CoordMode: string(coordMode),
 			StartTime: idx.StartTime(),
@@ -81,6 +86,23 @@ func LoadGame(dbPath string) (*Service, error) {
 			Players:   buildPlayerList(players),
 		},
 	}
+
+	// Load hotspot data from cache or compute it.
+	if frames, ok := hotspot.LoadCache(dbPath); ok {
+		svc.hotspots = frames
+	} else {
+		events, _ := decoder.LoadAllEvents(db)
+		frames, err := hotspot.ComputeHotspots(db, idx, resolver, events)
+		if err != nil {
+			log.Printf("hotspot compute error for %s: %v", dbPath, err)
+		} else {
+			svc.hotspots = frames
+			if saveErr := hotspot.SaveCache(dbPath, frames); saveErr != nil {
+				log.Printf("hotspot cache save error: %v", saveErr)
+			}
+		}
+	}
+
 	return svc, nil
 }
 
@@ -94,6 +116,38 @@ func (s *Service) Meta() GameMeta {
 
 func (s *Service) TimeIndex() *index.TimeIndex {
 	return s.idx
+}
+
+// Hotspots returns the full precomputed hotspot timeline.
+func (s *Service) Hotspots() []hotspot.HotspotFrame {
+	return s.hotspots
+}
+
+// HotspotAt returns a HotspotInfo for the frame nearest to ts, or nil if none.
+func (s *Service) HotspotAt(ts string) *HotspotInfo {
+	if len(s.hotspots) == 0 {
+		return nil
+	}
+	// Linear scan is fine: hotspots slice is at most ~500 entries.
+	// Find the closest frame by string comparison (timestamps are lexicographically sortable).
+	best := 0
+	for i := 1; i < len(s.hotspots); i++ {
+		if s.hotspots[i].Ts <= ts {
+			best = i
+		} else {
+			break
+		}
+	}
+	f := s.hotspots[best]
+	if len(f.TopRegions) == 0 {
+		return nil
+	}
+	top := f.TopRegions[0]
+	return &HotspotInfo{
+		Score:  top.Score,
+		Center: [2]float64{top.CenterLat, top.CenterLng},
+		Radius: top.Radius,
+	}
 }
 
 func (s *Service) GetFrame(ts string) (*Frame, error) {
@@ -130,7 +184,12 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		}
 	}
 
-	frame := &Frame{Type: "frame", Ts: actualTs, Units: units}
+	frame := &Frame{
+		Type:    "frame",
+		Ts:      actualTs,
+		Units:   units,
+		Hotspot: s.HotspotAt(actualTs),
+	}
 
 	if data, err := json.Marshal(frame); err == nil {
 		s.cache.Put(ts, data)

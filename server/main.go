@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"wargame-replay/server/api"
+	"wargame-replay/server/ws"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +28,7 @@ func main() {
 	r.GET("/api/games", handler.ListGames)
 	r.GET("/api/games/:id/meta", handler.GetMeta)
 	r.GET("/api/games/:id/frame/:ts", handler.GetFrame)
+	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
 	log.Printf("Starting server on %s, scanning %s", addr, *dir)

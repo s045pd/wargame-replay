@@ -33,6 +33,11 @@ func main() {
 	r.POST("/api/games/:id/bookmarks", handler.CreateBookmark)
 	r.DELETE("/api/games/:id/bookmarks/:idx", handler.DeleteBookmark)
 	r.GET("/api/games/:id/bookmarks/suggest", handler.SuggestBookmarks)
+	r.GET("/api/games/:id/clips", handler.ListClips)
+	r.POST("/api/games/:id/clips", handler.CreateClip)
+	r.PUT("/api/games/:id/clips/:idx", handler.UpdateClip)
+	r.DELETE("/api/games/:id/clips/:idx", handler.DeleteClip)
+	r.GET("/api/games/:id/clips/:idx/export", handler.ExportClip)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)

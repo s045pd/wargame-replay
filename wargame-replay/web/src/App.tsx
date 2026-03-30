@@ -9,6 +9,7 @@ import { RelativeCanvas } from './map/RelativeCanvas';
 import { Timeline } from './timeline/Timeline';
 import { DirectorPanel } from './director/DirectorPanel';
 import { BookmarkList } from './clips/BookmarkList';
+import { ClipEditor } from './clips/ClipEditor';
 
 export default function App() {
   const { gameId, setGame, connectWs, units, coordMode, currentTs } = usePlayback();
@@ -16,6 +17,7 @@ export default function App() {
   const { addBookmark } = useClips();
   const [games, setGames] = useState<GameInfo[]>([]);
   const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showClipEditor, setShowClipEditor] = useState(false);
 
   useEffect(() => {
     fetchGames().then(setGames).catch(console.error);
@@ -71,6 +73,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [gameId, currentTs, addBookmark]);
 
+  // C key — toggle clip editor panel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'c' || e.key === 'C') {
+        setShowClipEditor((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!gameId) {
     return (
       <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center">
@@ -108,6 +123,9 @@ export default function App() {
       <Timeline />
       {showBookmarks && (
         <BookmarkList onClose={() => setShowBookmarks(false)} />
+      )}
+      {showClipEditor && (
+        <ClipEditor onClose={() => setShowClipEditor(false)} />
       )}
     </div>
   );

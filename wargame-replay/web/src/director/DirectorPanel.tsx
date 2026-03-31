@@ -12,14 +12,9 @@ import { AutoSwitch } from './AutoSwitch';
  */
 function formatTs(ts: string): string {
   if (!ts) return '';
-  // If it looks like an ISO date, return HH:MM:SS
-  try {
-    const d = new Date(ts);
-    if (!isNaN(d.getTime())) {
-      return d.toISOString().slice(11, 19);
-    }
-  } catch {
-    // ignore
+  // DB timestamps are "YYYY-MM-DD HH:MM:SS" — extract the time part directly
+  if (ts.length >= 19 && ts[10] === ' ') {
+    return ts.slice(11, 19);
   }
   return ts.slice(0, 8);
 }

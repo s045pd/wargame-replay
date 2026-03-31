@@ -36,6 +36,7 @@ type streamState struct {
 	playing  bool
 	speed    int
 	currentI int
+	prevTs   string // timestamp of the last sent frame — used for event range
 	svc      *game.Service
 }
 
@@ -117,6 +118,7 @@ func (s *streamState) handleCommand(cmd Command, svc *game.Service, conn *websoc
 	case "seek":
 		ts := strings.Replace(cmd.To, "T", " ", 1)
 		s.currentI = idx.IndexOf(ts)
+		s.prevTs = "" // reset range on seek
 		if !s.playing {
 			s.sendFrame(conn, svc)
 		}
@@ -130,10 +132,16 @@ func (s *streamState) sendFrame(conn *websocket.Conn, svc *game.Service) {
 		s.playing = false
 		return
 	}
-	frame, err := svc.GetFrame(ts)
+
+	// Use GetFrameRange to collect events from prevTs..ts (covers fast-forward gaps)
+	frame, err := svc.GetFrameRange(s.prevTs, ts)
 	if err != nil {
 		return
 	}
+
+	// Track this timestamp for next frame's event range
+	s.prevTs = ts
+
 	data, _ := json.Marshal(frame)
 	conn.WriteMessage(websocket.TextMessage, data)
 }

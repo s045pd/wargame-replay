@@ -25,7 +25,7 @@ func TestComputeHotspots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTimeIndex: %v", err)
 	}
-	resolver, _, err := decoder.AutoDetectCoords(db)
+	resolver, _, err := decoder.AutoDetectCoords(db, "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db")
 	if err != nil {
 		t.Fatalf("AutoDetectCoords: %v", err)
 	}

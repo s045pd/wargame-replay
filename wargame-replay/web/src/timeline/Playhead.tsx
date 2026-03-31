@@ -15,11 +15,18 @@ export function Playhead({ trackAreaLeft }: PlayheadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
+  const parseTs = (ts: string) => new Date(ts.replace(' ', 'T')).getTime();
+  const toDbTs = (ms: number) => {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
   const positionPercent = useCallback((): number => {
     if (!meta || !currentTs) return 0;
-    const start = new Date(meta.startTime).getTime();
-    const end = new Date(meta.endTime).getTime();
-    const cur = new Date(currentTs).getTime();
+    const start = parseTs(meta.startTime);
+    const end = parseTs(meta.endTime);
+    const cur = parseTs(currentTs);
     const total = end - start;
     if (total <= 0) return 0;
     return Math.max(0, Math.min(1, (cur - start) / total));
@@ -32,9 +39,9 @@ export function Playhead({ trackAreaLeft }: PlayheadProps) {
       const trackWidth = rect.width - trackAreaLeft;
       const x = clientX - rect.left - trackAreaLeft;
       const ratio = Math.max(0, Math.min(1, x / trackWidth));
-      const start = new Date(meta.startTime).getTime();
-      const end = new Date(meta.endTime).getTime();
-      const ts = new Date(start + ratio * (end - start)).toISOString();
+      const start = parseTs(meta.startTime);
+      const end = parseTs(meta.endTime);
+      const ts = toDbTs(start + ratio * (end - start));
       seek(ts);
     },
     [meta, seek, trackAreaLeft],

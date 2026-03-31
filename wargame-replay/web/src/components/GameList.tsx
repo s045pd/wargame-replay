@@ -95,7 +95,7 @@ export function GameList() {
   useEffect(() => {
     setLoading(true);
     fetchGames()
-      .then(setGames)
+      .then(data => setGames(data ?? []))
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setLoading(false));
   }, []);

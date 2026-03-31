@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 )
 
-// LoadAllEvents reads DataType=5 (scoreboard) records and DataType=2 (hit/kill) records.
+// LoadAllEvents reads DataType=5 (scoreboard) records and DataType=2 (hit/kill/revive/heal) records.
 func LoadAllEvents(db *sql.DB) ([]GameEvent, error) {
 	var events []GameEvent
 
-	// DataType=2: Hit events — per-player damage records
-	// Format: [0x01] [HP remaining: 0-80] [ShooterID uint16LE]
+	// DataType=2: Combat events — hit, kill, revive, heal/zone-damage
 	hitEvents, err := LoadHitEvents(db)
 	if err != nil {
 		return nil, err
@@ -20,12 +19,16 @@ func LoadAllEvents(db *sql.DB) ([]GameEvent, error) {
 	return events, nil
 }
 
-// LoadHitEvents reads DataType=2 records which track individual hit/kill events.
-// Each record: SrcIndex = victim, LogData = [0x01, HP, shooterID_lo, shooterID_hi]
+// LoadHitEvents reads DataType=2, SrcType=1 records which track combat events.
+//
+// Three event sub-types based on first byte:
+//   - 0x01 (4 bytes): Hit/Kill — [0x01] [HP] [shooterID_lo] [shooterID_hi]
+//   - 0x40 (2 bytes): System HP change — [0x40] [HP] (medic heal or zone damage, no shooter)
+//   - 0x41 (2 bytes): Mass Revive — [0x41] [HP] (batch revive, no shooter)
 func LoadHitEvents(db *sql.DB) ([]GameEvent, error) {
 	rows, err := db.Query(`
 		SELECT SrcIndex, LogTime, LogData FROM record
-		WHERE SrcType=1 AND DataType=2 AND LogData IS NOT NULL AND length(LogData) >= 4
+		WHERE SrcType=1 AND DataType=2 AND LogData IS NOT NULL AND length(LogData) >= 2
 		ORDER BY LogTime
 	`)
 	if err != nil {
@@ -41,29 +44,60 @@ func LoadHitEvents(db *sql.DB) ([]GameEvent, error) {
 		if err := rows.Scan(&victimID, &ts, &blob); err != nil {
 			continue
 		}
-		if len(blob) < 4 {
+		if len(blob) < 2 {
 			continue
 		}
 
+		eventType := blob[0]
 		hp := int(blob[1])
-		shooterID := int(binary.LittleEndian.Uint16(blob[2:4]))
 
-		if hp == 0 {
-			// Kill event — HP dropped to 0
+		switch eventType {
+		case 0x01:
+			// Hit/Kill event — needs 4 bytes for shooter ID
+			if len(blob) < 4 {
+				continue
+			}
+			shooterID := int(binary.LittleEndian.Uint16(blob[2:4]))
+			if hp == 0 {
+				events = append(events, GameEvent{
+					Type:  "kill",
+					Ts:    ts,
+					SrcID: shooterID,
+					DstID: victimID,
+					HP:    0,
+				})
+			} else {
+				events = append(events, GameEvent{
+					Type:  "hit",
+					Ts:    ts,
+					SrcID: shooterID,
+					DstID: victimID,
+					HP:    hp,
+				})
+			}
+
+		case 0x41:
+			// Mass Revive — unit revived (batch event)
+			// HP byte: post-revive HP (may be 0x00 in some DBs, 0x32=50 in others)
+			reviveHP := hp
+			if reviveHP == 0 {
+				reviveHP = 100 // default full HP on revive if not specified
+			}
 			events = append(events, GameEvent{
-				Type:  "kill",
+				Type:  "revive",
 				Ts:    ts,
-				SrcID: shooterID, // killer
-				DstID: victimID,  // victim
-				HP:    0,
+				SrcID: victimID, // revived unit is both src and dst
+				DstID: victimID,
+				HP:    reviveHP,
 			})
-		} else {
-			// Hit event — damage taken
+
+		case 0x40:
+			// System HP change — no shooter (medic heal or zone damage)
 			events = append(events, GameEvent{
-				Type:  "hit",
+				Type:  "heal",
 				Ts:    ts,
-				SrcID: shooterID, // shooter
-				DstID: victimID,  // victim
+				SrcID: victimID, // no shooter, use self
+				DstID: victimID,
 				HP:    hp,
 			})
 		}
@@ -84,7 +118,6 @@ type BombingEvent struct {
 }
 
 // LoadBombingEvents reads DataType=11 records which represent bombing/special battlefield events.
-// Each record: LocLat/LocLng = raw coordinates, LogData = [param, 0, type, subtype]
 func LoadBombingEvents(db *sql.DB) ([]BombingEvent, error) {
 	rows, err := db.Query(`
 		SELECT LocLat, LocLng, LogTime, LogData FROM record
@@ -127,9 +160,7 @@ type BaseCamp struct {
 }
 
 // ComputeBaseCamps finds team spawn positions from the earliest position frame.
-// It takes the centroid of each team's unit positions from the first few seconds.
 func ComputeBaseCamps(db *sql.DB, resolver CoordResolver) []BaseCamp {
-	// Get the earliest timestamp
 	var firstTs string
 	err := db.QueryRow(`
 		SELECT MIN(LogTime) FROM record WHERE SrcType=1 AND DataType=1
@@ -138,7 +169,6 @@ func ComputeBaseCamps(db *sql.DB, resolver CoordResolver) []BaseCamp {
 		return nil
 	}
 
-	// Get positions from the first 10 seconds to collect all units
 	rows, err := db.Query(`
 		SELECT LogData FROM record
 		WHERE SrcType=1 AND DataType=1
@@ -158,7 +188,6 @@ func ComputeBaseCamps(db *sql.DB, resolver CoordResolver) []BaseCamp {
 		"red":  {},
 		"blue": {},
 	}
-
 	seen := make(map[uint16]bool)
 
 	for rows.Next() {
@@ -179,8 +208,7 @@ func ComputeBaseCamps(db *sql.DB, resolver CoordResolver) []BaseCamp {
 			if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
 				continue
 			}
-			team := u.Team
-			if acc, ok := teams[team]; ok {
+			if acc, ok := teams[u.Team]; ok {
 				acc.sumLat += lat
 				acc.sumLng += lng
 				acc.count++
@@ -202,7 +230,6 @@ func ComputeBaseCamps(db *sql.DB, resolver CoordResolver) []BaseCamp {
 }
 
 // LoadScoreUpdates reads DataType=5 (scoreboard) records.
-// 224 bytes per record, tracking cumulative team kill counts.
 func LoadScoreUpdates(db *sql.DB) ([]GameEvent, error) {
 	rows, err := db.Query(`
 		SELECT LogTime, LogData FROM record

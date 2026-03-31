@@ -12,6 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 func serveStatic(r *gin.Engine) {
 	distFS, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -30,11 +33,21 @@ func serveStatic(r *gin.Engine) {
 		f, err := distFS.Open(relPath)
 		if err != nil || relPath == "" {
 			// SPA fallback: serve index.html for unknown routes
+			// No-cache for HTML so browser always gets latest version
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
 			c.Request.URL.Path = "/"
 			fileServer.ServeHTTP(c.Writer, c.Request)
 			return
 		}
 		f.Close()
+		// Cache hashed assets for 1 year, no-cache for everything else
+		if len(relPath) > 7 && relPath[:7] == "assets/" {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		}
 		fileServer.ServeHTTP(c.Writer, c.Request)
 	})
 }
@@ -52,7 +65,7 @@ func main() {
 
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "dir": *dir})
+		c.JSON(200, gin.H{"status": "ok", "version": version, "dir": *dir})
 	})
 	r.GET("/api/games", handler.ListGames)
 	r.GET("/api/games/:id/meta", handler.GetMeta)
@@ -69,11 +82,13 @@ func main() {
 	r.GET("/api/games/:id/clips/:idx/export", handler.ExportClip)
 	r.GET("/api/games/:id/unitclasses", handler.GetUnitClasses)
 	r.PUT("/api/games/:id/unitclasses", handler.SetUnitClasses)
+	r.POST("/api/upload", handler.UploadGame)
+	r.DELETE("/api/games/:id", handler.DeleteGame)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	serveStatic(r)
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	log.Printf("Starting server on %s, scanning %s", addr, *dir)
+	log.Printf("Wargame Replay %s — starting on %s, scanning %s", version, addr, *dir)
 	log.Fatal(r.Run(addr))
 }

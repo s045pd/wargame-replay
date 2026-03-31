@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { UnitPosition } from '../lib/api';
 import { useDirector } from '../store/director';
+import { usePlayback } from '../store/playback';
+import { useI18n } from '../lib/i18n';
 
 interface QuadrantViewport {
   label: string;
-  // Normalized [0,1] region of the map this preview focuses on
   xMin: number;
   yMin: number;
   xMax: number;
@@ -24,19 +25,46 @@ function teamColor(team: string): string {
   return '#aaaaaa';
 }
 
+/** Normalize units to [0,1] range regardless of coordinate mode. */
+function normalizeUnits(
+  units: UnitPosition[],
+  coordMode: string,
+  bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+): { nx: number; ny: number; team: string; alive: boolean }[] {
+  const result: { nx: number; ny: number; team: string; alive: boolean }[] = [];
+
+  if (coordMode === 'wgs84' && bounds) {
+    const latRange = bounds.maxLat - bounds.minLat;
+    const lngRange = bounds.maxLng - bounds.minLng;
+    if (latRange <= 0 || lngRange <= 0) return result;
+
+    for (const u of units) {
+      if (u.lat === undefined || u.lng === undefined) continue;
+      const nx = (u.lng - bounds.minLng) / lngRange;
+      // Flip lat: higher lat = top of screen (lower y)
+      const ny = 1 - (u.lat - bounds.minLat) / latRange;
+      result.push({ nx, ny, team: u.team, alive: u.alive });
+    }
+  } else {
+    for (const u of units) {
+      if (u.x === undefined || u.y === undefined) continue;
+      result.push({ nx: u.x, ny: u.y, team: u.team, alive: u.alive });
+    }
+  }
+  return result;
+}
+
 function drawPreview(
   ctx: CanvasRenderingContext2D,
-  units: UnitPosition[],
+  normalizedUnits: { nx: number; ny: number; team: string; alive: boolean }[],
   width: number,
   height: number,
   viewport: QuadrantViewport,
   isActive: boolean,
 ) {
-  // Background
   ctx.fillStyle = '#0a0a14';
   ctx.fillRect(0, 0, width, height);
 
-  // Border highlight if active
   if (isActive) {
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 2;
@@ -46,24 +74,16 @@ function drawPreview(
   const vw = viewport.xMax - viewport.xMin;
   const vh = viewport.yMax - viewport.yMin;
 
-  // Draw units within the viewport
-  for (const unit of units) {
+  for (const unit of normalizedUnits) {
     if (!unit.alive) continue;
-    if (unit.x === undefined || unit.y === undefined) continue;
 
-    // Map from viewport space to canvas space
-    const nx = (unit.x - viewport.xMin) / vw;
-    const ny = (unit.y - viewport.yMin) / vh;
+    const nx = (unit.nx - viewport.xMin) / vw;
+    const ny = (unit.ny - viewport.yMin) / vh;
 
-    // Slightly draw units outside the viewport as dimmed
-    const inside = nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) continue;
+
     const px = nx * width;
     const py = ny * height;
-
-    if (!inside) {
-      // Skip units outside viewport
-      continue;
-    }
 
     ctx.beginPath();
     ctx.arc(px, py, 3, 0, Math.PI * 2);
@@ -80,13 +100,13 @@ function drawPreview(
 }
 
 interface PreviewCanvasProps {
-  units: UnitPosition[];
+  normalizedUnits: { nx: number; ny: number; team: string; alive: boolean }[];
   viewport: QuadrantViewport;
   isActive: boolean;
   onSelect: () => void;
 }
 
-function PreviewCanvas({ units, viewport, isActive, onSelect }: PreviewCanvasProps) {
+function PreviewCanvas({ normalizedUnits, viewport, isActive, onSelect }: PreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
 
@@ -117,10 +137,10 @@ function PreviewCanvas({ units, viewport, isActive, onSelect }: PreviewCanvasPro
     rafRef.current = requestAnimationFrame(() => {
       const dpr = window.devicePixelRatio;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawPreview(ctx, units, canvas.offsetWidth, canvas.offsetHeight, viewport, isActive);
+      drawPreview(ctx, normalizedUnits, canvas.offsetWidth, canvas.offsetHeight, viewport, isActive);
       rafRef.current = null;
     });
-  }, [units, viewport, isActive]);
+  }, [normalizedUnits, viewport, isActive]);
 
   return (
     <div
@@ -144,10 +164,14 @@ interface PreviewGridProps {
 
 export function PreviewGrid({ units }: PreviewGridProps) {
   const { targetCamera, setTargetCamera } = useDirector();
+  const { coordMode, meta } = usePlayback();
+  const { t } = useI18n();
+
+  // Normalize all units to [0,1] once
+  const normalizedUnits = normalizeUnits(units, coordMode, meta?.bounds);
 
   const getActiveIndex = (): number => {
     if (!targetCamera) return -1;
-    // Determine which quadrant the target camera is in
     const cx = targetCamera.x ?? 0.5;
     const cy = targetCamera.y ?? 0.5;
     return QUADRANTS.findIndex(
@@ -161,17 +185,27 @@ export function PreviewGrid({ units }: PreviewGridProps) {
     const q = QUADRANTS[idx];
     const cx = (q.xMin + q.xMax) / 2;
     const cy = (q.yMin + q.yMax) / 2;
-    setTargetCamera({ x: cx, y: cy, zoom: 6 });
+
+    if (coordMode === 'wgs84' && meta?.bounds) {
+      const bounds = meta.bounds;
+      const latRange = bounds.maxLat - bounds.minLat;
+      const lngRange = bounds.maxLng - bounds.minLng;
+      const lng = bounds.minLng + cx * lngRange;
+      const lat = bounds.maxLat - cy * latRange; // Flip: y=0 is top = maxLat
+      setTargetCamera({ lng, lat, zoom: 16 });
+    } else {
+      setTargetCamera({ x: cx, y: cy, zoom: 6 });
+    }
   };
 
   return (
     <div className="space-y-1">
-      <div className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Preview</div>
+      <div className="text-xs text-zinc-500 uppercase tracking-wider mb-2">{t('preview')}</div>
       <div className="grid grid-cols-2 gap-1">
         {QUADRANTS.map((q, i) => (
           <PreviewCanvas
             key={q.label}
-            units={units}
+            normalizedUnits={normalizedUnits}
             viewport={q}
             isActive={activeIdx === i}
             onSelect={() => handleSelect(i)}

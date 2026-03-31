@@ -6,47 +6,41 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"wargame-replay/server/decoder"
-	"wargame-replay/server/index"
 )
 
-func TestComputeHotspots(t *testing.T) {
+func TestDetectHotspotEvents(t *testing.T) {
 	db, err := sql.Open("sqlite3", "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db?mode=ro")
 	if err != nil {
 		t.Skip("test db not found")
 	}
 	defer db.Close()
 
-	// Verify db is usable; skip if file is absent.
 	if err := db.Ping(); err != nil {
 		t.Skip("test db not accessible: " + err.Error())
 	}
 
-	idx, err := index.BuildTimeIndex(db)
-	if err != nil {
-		t.Fatalf("BuildTimeIndex: %v", err)
-	}
 	resolver, _, err := decoder.AutoDetectCoords(db, "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db")
 	if err != nil {
 		t.Fatalf("AutoDetectCoords: %v", err)
 	}
-	events, err := decoder.LoadAllEvents(db)
+	combatEvents, err := decoder.LoadAllEvents(db)
 	if err != nil {
 		t.Fatalf("LoadAllEvents: %v", err)
 	}
-
-	frames, err := ComputeHotspots(db, idx, resolver, events)
-	if err != nil {
-		t.Fatal(err)
+	bombingEvents, _ := decoder.LoadBombingEvents(db)
+	for i := range bombingEvents {
+		lat, lng := resolver.Convert(bombingEvents[i].RawLat, bombingEvents[i].RawLng)
+		bombingEvents[i].Lat = lat
+		bombingEvents[i].Lng = lng
 	}
-	if len(frames) == 0 {
-		t.Fatal("expected non-empty hotspot timeline")
-	}
-	t.Logf("Computed %d hotspot frames", len(frames))
 
-	// Validate score range on every frame.
-	for i, f := range frames {
-		if f.MaxScore < 0 || f.MaxScore > 1 {
-			t.Errorf("frame %d score out of [0,1] range: %f", i, f.MaxScore)
-		}
+	events := DetectHotspotEvents(db, resolver, combatEvents, bombingEvents)
+	if len(events) == 0 {
+		t.Fatal("expected non-empty hotspot events")
+	}
+	t.Logf("Detected %d hotspot events", len(events))
+	for _, h := range events {
+		t.Logf("  #%d [%s] %s  score=%.1f  kills=%d hits=%d  units=%d  %s..%s",
+			h.ID, h.Type, h.Label, h.Score, h.Kills, h.Hits, len(h.Units), h.StartTs, h.EndTs)
 	}
 }

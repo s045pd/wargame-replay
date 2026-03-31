@@ -85,7 +85,7 @@ export interface UnitPosition {
 }
 
 export interface GameEvent {
-  type: 'kill' | 'hit' | 'score_update';
+  type: 'kill' | 'hit' | 'revive' | 'heal' | 'score_update';
   src: number;
   dst?: number;
   ts: string;
@@ -96,13 +96,75 @@ export interface GameEvent {
   dstClass?: string;
 }
 
+export interface HotspotEvent {
+  id: number;
+  type: 'firefight' | 'killstreak' | 'mass_casualty' | 'engagement' | 'bombardment';
+  startTs: string;
+  endTs: string;
+  peakTs: string;
+  centerLat: number;
+  centerLng: number;
+  radius: number;
+  score: number;
+  label: string;
+  kills: number;
+  hits: number;
+  units?: number[];
+  focusUnitId?: number;
+  focusName?: string;
+}
+
 export interface Frame {
   type: 'frame';
   ts: string;
   units: UnitPosition[];
   events: GameEvent[];
   pois?: POIObject[];
-  hotspot?: { score: number; center: [number, number]; radius: number };
+  hotspots?: HotspotEvent[];
+}
+
+/** Result of a single file in a multi-file upload. */
+export interface UploadFileResult {
+  filename: string;
+  status: 'ok' | 'error';
+  message?: string;
+  game?: GameInfo;
+}
+
+/** Upload multiple .db and .txt files. Returns per-file results. */
+export async function uploadFiles(files: File[]): Promise<UploadFileResult[]> {
+  const form = new FormData();
+  for (const f of files) {
+    form.append('files', f);
+  }
+  const res = await fetch(`${BASE}/api/upload`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.detail || err.error || 'Upload failed');
+  }
+  const data = await res.json();
+  // Handle legacy single-file response (returns GameInfo directly)
+  if (data.results) return data.results;
+  // Legacy: single game returned
+  return [{ filename: files[0]?.name ?? '', status: 'ok', game: data }];
+}
+
+/** Upload a single .db game file (legacy helper). */
+export async function uploadGame(file: File): Promise<GameInfo> {
+  const results = await uploadFiles([file]);
+  const ok = results.find(r => r.status === 'ok' && r.game);
+  if (ok?.game) return ok.game;
+  const err = results.find(r => r.status === 'error');
+  throw new Error(err?.message || 'Upload failed');
+}
+
+/** Delete a game by ID. */
+export async function deleteGame(gameId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/games/${gameId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Delete failed');
+  }
 }
 
 export async function fetchGames(): Promise<GameInfo[]> {
@@ -112,6 +174,12 @@ export async function fetchGames(): Promise<GameInfo[]> {
 
 export async function fetchMeta(gameId: string): Promise<GameMeta> {
   const res = await fetch(`${BASE}/api/games/${gameId}/meta`);
+  return res.json();
+}
+
+/** Fetch ALL hotspot events for the entire game (pre-computed on server). */
+export async function fetchHotspots(gameId: string): Promise<HotspotEvent[]> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/hotspots`);
   return res.json();
 }
 

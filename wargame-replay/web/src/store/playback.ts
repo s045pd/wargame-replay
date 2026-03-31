@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { GameMeta, GameEvent, UnitPosition, Frame, POIObject } from '../lib/api';
+import { GameMeta, GameEvent, UnitPosition, POIObject, HotspotEvent } from '../lib/api';
 import { GameWebSocket } from '../lib/ws';
 import { MapStyleKey } from '../map/styles';
 
@@ -19,8 +19,11 @@ interface PlaybackState {
   // Frame data
   units: UnitPosition[];
   events: GameEvent[];
-  hotspot: Frame['hotspot'];
+  hotspots: HotspotEvent[];
   pois: POIObject[];
+
+  // Pre-computed full hotspot timeline (fetched once from REST API)
+  allHotspots: HotspotEvent[];
 
   // Map UI state
   mapStyle: MapStyleKey;
@@ -30,6 +33,7 @@ interface PlaybackState {
 
   // Actions
   setGame: (gameId: string, meta: GameMeta) => void;
+  setAllHotspots: (hotspots: HotspotEvent[]) => void;
   resetGame: () => void;
   connectWs: () => void;
   disconnectWs: () => void;
@@ -50,13 +54,14 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   ws: null,
   currentTs: '',
   playing: false,
-  speed: 1,
+  speed: 64,
   coordMode: 'relative',
   units: [],
   events: [],
-  hotspot: undefined,
+  hotspots: [],
   pois: [],
-  mapStyle: 'dark',
+  allHotspots: [],
+  mapStyle: 'satellite',
   trailEnabled: true,
   selectedUnitId: null,
   followSelectedUnit: false,
@@ -66,6 +71,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     coordMode: meta.coordMode as 'wgs84' | 'relative',
     currentTs: meta.startTime,
   }),
+
+  setAllHotspots: (hotspots) => set({ allHotspots: hotspots }),
 
   resetGame: () => {
     get().ws?.disconnect();
@@ -78,8 +85,9 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       playing: false,
       units: [],
       events: [],
-      hotspot: undefined,
+      hotspots: [],
       pois: [],
+      allHotspots: [],
     });
   },
 
@@ -104,7 +112,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
           currentTs: msg['ts'] as string,
           units,
           events: (msg['events'] as GameEvent[]) ?? [],
-          hotspot: msg['hotspot'] as Frame['hotspot'],
+          hotspots: (msg['hotspots'] as HotspotEvent[]) ?? [],
           pois: (msg['pois'] as POIObject[]) ?? [],
         });
       }

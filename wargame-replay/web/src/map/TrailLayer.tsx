@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'mapbox-gl';
 import { UnitPosition, GameEvent } from '../lib/api';
 
 interface TrailLayerProps {
@@ -7,6 +7,7 @@ interface TrailLayerProps {
   units: UnitPosition[];
   trailEnabled: boolean;
   events?: GameEvent[];
+  selectedUnitId?: number | null;
 }
 
 // ---------- source / layer IDs ----------
@@ -16,22 +17,26 @@ const KILL_GLOW_LAYER = 'attack-kill-glow';
 const KILL_CORE_LAYER = 'attack-kill-core';
 const HIT_GLOW_LAYER = 'attack-hit-glow';
 const HIT_CORE_LAYER = 'attack-hit-core';
+const FOLLOW_GLOW_LAYER = 'attack-follow-glow';
+const FOLLOW_CORE_LAYER = 'attack-follow-core';
 
-const ALL_LAYERS = [KILL_GLOW_LAYER, KILL_CORE_LAYER, HIT_GLOW_LAYER, HIT_CORE_LAYER] as const;
+const ALL_LAYERS = [
+  FOLLOW_CORE_LAYER, FOLLOW_GLOW_LAYER,
+  KILL_GLOW_LAYER, KILL_CORE_LAYER,
+  HIT_GLOW_LAYER, HIT_CORE_LAYER,
+] as const;
 
 // ---------- colours ----------
 const KILL_COLOR = '#ff3333';
 const KILL_GLOW_COLOR = 'rgba(255, 50, 50, 0.5)';
 const HIT_COLOR = '#ffcc00';
 const HIT_GLOW_COLOR = 'rgba(255, 200, 0, 0.4)';
+const FOLLOW_COLOR = '#00ff66';
+const FOLLOW_GLOW_COLOR = 'rgba(0, 255, 100, 0.55)';
 
 // ---------- animation config ----------
-/**
- * Tracer animation: a short bright segment flies from shooter to target,
- * like a tracer round / night-fire bullet. Flash and gone.
- */
-const TRACER_DURATION_MS = 350; // total time from appear to gone
-const TRACER_LENGTH = 0.2;     // trail length as fraction of total distance (0..1)
+const TRACER_DURATION_MS = 350;
+const TRACER_LENGTH = 0.2;
 
 interface TracerEntry {
   srcLng: number;
@@ -39,6 +44,7 @@ interface TracerEntry {
   dstLng: number;
   dstLat: number;
   isKill: boolean;
+  isFollowed: boolean;
   startTime: number;
 }
 
@@ -53,11 +59,6 @@ function lerpCoord(
   ];
 }
 
-/**
- * Build the tracer segment at the current time.
- * A short bright segment (head+tail) flies from src to dst.
- * Once the head passes dst, it's gone.
- */
 function buildTracerCoords(
   entry: TracerEntry,
   now: number,
@@ -68,22 +69,17 @@ function buildTracerCoords(
   const { srcLng, srcLat, dstLng, dstLat } = entry;
   const t = elapsed / TRACER_DURATION_MS;
 
-  // Head position: flies from 0 → 1+TRACER_LENGTH so it fully exits the line
   const headT = Math.min(t * (1 + TRACER_LENGTH), 1 + TRACER_LENGTH);
-  // Tail position: follows behind the head
   const tailT = Math.max(0, headT - TRACER_LENGTH);
 
-  // Clamp to [0, 1] — anything past 1.0 is beyond the target
   const clampedHead = Math.min(headT, 1);
   const clampedTail = Math.min(tailT, 1);
 
-  // If both clamped to 1, the segment has passed → done
   if (clampedHead === clampedTail && clampedHead >= 1) return null;
 
   const head = lerpCoord(srcLng, srcLat, dstLng, dstLat, clampedHead);
   const tail = lerpCoord(srcLng, srcLat, dstLng, dstLat, clampedTail);
 
-  // Full brightness throughout — it's a quick flash, no need for fade
   return { coords: [tail, head], opacity: 1 };
 }
 
@@ -105,6 +101,7 @@ function buildAnimatedGeoJson(
       },
       properties: {
         isKill: tr.isKill,
+        isFollowed: tr.isFollowed,
         opacity: result.opacity,
       },
     });
@@ -113,7 +110,7 @@ function buildAnimatedGeoJson(
   return { type: 'FeatureCollection', features };
 }
 
-export function TrailLayer({ map, units, trailEnabled, events }: TrailLayerProps) {
+export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }: TrailLayerProps) {
   const layersAddedRef = useRef(false);
   const tracersRef = useRef<TracerEntry[]>([]);
   const rafRef = useRef<number>(0);
@@ -130,8 +127,11 @@ export function TrailLayer({ map, units, trailEnabled, events }: TrailLayerProps
         data: { type: 'FeatureCollection', features: [] },
       });
 
-      const killFilter: mapboxgl.Expression = ['==', ['get', 'isKill'], true];
-      const hitFilter: mapboxgl.Expression = ['==', ['get', 'isKill'], false];
+      // Filters: followed tracers get green, others get kill/hit colors
+      const notFollowed: mapboxgl.Expression = ['!=', ['get', 'isFollowed'], true];
+      const killFilter: mapboxgl.Expression = ['all', ['==', ['get', 'isKill'], true], notFollowed];
+      const hitFilter: mapboxgl.Expression = ['all', ['==', ['get', 'isKill'], false], notFollowed];
+      const followedFilter: mapboxgl.Expression = ['==', ['get', 'isFollowed'], true];
 
       // --- kill glow ---
       map.addLayer({
@@ -191,6 +191,35 @@ export function TrailLayer({ map, units, trailEnabled, events }: TrailLayerProps
         },
       });
 
+      // --- followed unit glow (green) ---
+      map.addLayer({
+        id: FOLLOW_GLOW_LAYER,
+        type: 'line',
+        source: ATTACK_SOURCE_ID,
+        filter: followedFilter,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': FOLLOW_GLOW_COLOR,
+          'line-width': 20,
+          'line-opacity': ['get', 'opacity'],
+          'line-blur': 8,
+        },
+      });
+
+      // --- followed unit core (green) ---
+      map.addLayer({
+        id: FOLLOW_CORE_LAYER,
+        type: 'line',
+        source: ATTACK_SOURCE_ID,
+        filter: followedFilter,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': FOLLOW_COLOR,
+          'line-width': 5,
+          'line-opacity': ['get', 'opacity'],
+        },
+      });
+
       layersAddedRef.current = true;
     }
 
@@ -241,14 +270,17 @@ export function TrailLayer({ map, units, trailEnabled, events }: TrailLayerProps
       if (src.lng === undefined || src.lat === undefined) continue;
       if (dst.lng === undefined || dst.lat === undefined) continue;
 
-      // Stagger multiple tracers slightly so they don't all flash at exactly the same instant
+      // Mark tracers from the followed unit as green
+      const isFollowed = selectedUnitId != null && src.id === selectedUnitId;
+
       tracersRef.current.push({
         srcLng: src.lng,
         srcLat: src.lat,
         dstLng: dst.lng,
         dstLat: dst.lat,
         isKill: ev.type === 'kill',
-        startTime: now + addedCount * 60, // 60ms stagger between each
+        isFollowed,
+        startTime: now + addedCount * 60,
       });
       addedCount++;
     }
@@ -281,7 +313,7 @@ export function TrailLayer({ map, units, trailEnabled, events }: TrailLayerProps
       };
       rafRef.current = requestAnimationFrame(animate);
     }
-  }, [map, units, trailEnabled, events]);
+  }, [map, units, trailEnabled, events, selectedUnitId]);
 
   // Clear when trails disabled
   useEffect(() => {

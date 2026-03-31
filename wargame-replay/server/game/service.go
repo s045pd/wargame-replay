@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"wargame-replay/server/decoder"
 	"wargame-replay/server/hotspot"
 	"wargame-replay/server/index"
@@ -47,18 +48,12 @@ type GameMeta struct {
 }
 
 type Frame struct {
-	Type    string                 `json:"type"`
-	Ts      string                 `json:"ts"`
-	Units   []decoder.UnitPosition `json:"units"`
-	Events  []decoder.GameEvent    `json:"events"`
-	Hotspot *HotspotInfo           `json:"hotspot,omitempty"`
-	POIs    []decoder.POIObject    `json:"pois,omitempty"`
-}
-
-type HotspotInfo struct {
-	Score  float32    `json:"score"`
-	Center [2]float64 `json:"center"`
-	Radius float32    `json:"radius"`
+	Type     string                 `json:"type"`
+	Ts       string                 `json:"ts"`
+	Units    []decoder.UnitPosition `json:"units"`
+	Events   []decoder.GameEvent    `json:"events"`
+	Hotspots []hotspot.HotspotEvent `json:"hotspots,omitempty"`
+	POIs     []decoder.POIObject    `json:"pois,omitempty"`
 }
 
 // hpEntry stores a unit's HP at a specific timestamp.
@@ -75,11 +70,16 @@ type Service struct {
 	players  map[int]string
 	meta     GameMeta
 	dbPath   string
-	hotspots []hotspot.HotspotFrame
+	hotspotEvents []hotspot.HotspotEvent
 	// HP timeline per unit: sorted by timestamp ascending
 	hpTimeline map[int][]hpEntry
 	// hitEvents indexed by timestamp for frame enrichment
 	hitEventsByTs map[string][]decoder.GameEvent
+	// sorted unique timestamps that have events (for binary search in collectEvents)
+	hitTimestamps []string
+	// shooterAliveTs: sorted timestamps at which each unit was the SOURCE of a hit/kill.
+	// Used as "proof of life" — a unit that fires a shot is necessarily alive.
+	shooterAliveTs map[int][]string
 	// Unit class configuration
 	unitClasses *UnitClassConfig
 }
@@ -162,9 +162,10 @@ func LoadGame(dbPath string) (*Service, error) {
 		players:       players,
 		dbPath:        dbPath,
 		meta:          gameMeta,
-		hpTimeline:    make(map[int][]hpEntry),
-		hitEventsByTs: make(map[string][]decoder.GameEvent),
-		unitClasses:   ucfg,
+		hpTimeline:     make(map[int][]hpEntry),
+		hitEventsByTs:  make(map[string][]decoder.GameEvent),
+		shooterAliveTs: make(map[int][]string),
+		unitClasses:    ucfg,
 	}
 
 	// Load hit events, index by timestamp, and build HP timeline
@@ -187,21 +188,46 @@ func LoadGame(dbPath string) (*Service, error) {
 				Ts: ts,
 				HP: hitEvents[i].HP,
 			})
+
+			// Track shooter "proof of life" — a unit that fires a shot is alive.
+			// This handles respawns that generate no explicit revive event.
+			shooterID := hitEvents[i].SrcID
+			evType := hitEvents[i].Type
+			if shooterID != 0 && shooterID != victimID && (evType == "kill" || evType == "hit") {
+				sts := svc.shooterAliveTs[shooterID]
+				// Deduplicate: only append if timestamp is new (events are sorted by ts)
+				if len(sts) == 0 || sts[len(sts)-1] != ts {
+					svc.shooterAliveTs[shooterID] = append(sts, ts)
+				}
+			}
 		}
 	}
 
-	// Load hotspot data from cache or compute it.
+	// Build sorted timestamp index for binary search in collectEvents.
+	svc.hitTimestamps = make([]string, 0, len(svc.hitEventsByTs))
+	for ts := range svc.hitEventsByTs {
+		svc.hitTimestamps = append(svc.hitTimestamps, ts)
+	}
+	sort.Strings(svc.hitTimestamps)
+
+	// Detect hotspot events from cache or compute.
 	allEvents, _ := decoder.LoadAllEvents(db)
-	if frames, ok := hotspot.LoadCache(dbPath); ok {
-		svc.hotspots = frames
+	if cached, ok := hotspot.LoadCache(dbPath); ok {
+		svc.hotspotEvents = cached
 	} else {
-		frames, err := hotspot.ComputeHotspots(db, idx, resolver, allEvents)
-		if err != nil {
-			log.Printf("hotspot compute error for %s: %v", dbPath, err)
-		} else {
-			svc.hotspots = frames
-			if saveErr := hotspot.SaveCache(dbPath, frames); saveErr != nil {
-				log.Printf("hotspot cache save error: %v", saveErr)
+		detected := hotspot.DetectHotspotEvents(db, resolver, allEvents, gameMeta.BombingEvents)
+		svc.hotspotEvents = detected
+		log.Printf("Detected %d hotspot events for %s", len(detected), dbPath)
+		if saveErr := hotspot.SaveCache(dbPath, detected); saveErr != nil {
+			log.Printf("hotspot cache save error: %v", saveErr)
+		}
+	}
+
+	// Populate FocusName from players map for killstreak events
+	for i := range svc.hotspotEvents {
+		if svc.hotspotEvents[i].FocusUnitID != 0 {
+			if name, ok := players[svc.hotspotEvents[i].FocusUnitID]; ok {
+				svc.hotspotEvents[i].FocusName = name
 			}
 		}
 	}
@@ -221,9 +247,9 @@ func (s *Service) TimeIndex() *index.TimeIndex {
 	return s.idx
 }
 
-// Hotspots returns the full precomputed hotspot timeline.
-func (s *Service) Hotspots() []hotspot.HotspotFrame {
-	return s.hotspots
+// HotspotEvents returns the full list of detected hotspot events.
+func (s *Service) HotspotEvents() []hotspot.HotspotEvent {
+	return s.hotspotEvents
 }
 
 // UnitClasses returns the unit class configuration.
@@ -231,31 +257,15 @@ func (s *Service) UnitClasses() *UnitClassConfig {
 	return s.unitClasses
 }
 
-// HotspotAt returns a HotspotInfo for the frame nearest to ts, or nil if none.
-func (s *Service) HotspotAt(ts string) *HotspotInfo {
-	if len(s.hotspots) == 0 {
-		return nil
-	}
-	// Linear scan is fine: hotspots slice is at most ~500 entries.
-	// Find the closest frame by string comparison (timestamps are lexicographically sortable).
-	best := 0
-	for i := 1; i < len(s.hotspots); i++ {
-		if s.hotspots[i].Ts <= ts {
-			best = i
-		} else {
-			break
+// ActiveHotspots returns all hotspot events whose time range includes ts.
+func (s *Service) ActiveHotspots(ts string) []hotspot.HotspotEvent {
+	var active []hotspot.HotspotEvent
+	for _, h := range s.hotspotEvents {
+		if ts >= h.StartTs && ts <= h.EndTs {
+			active = append(active, h)
 		}
 	}
-	f := s.hotspots[best]
-	if len(f.TopRegions) == 0 {
-		return nil
-	}
-	top := f.TopRegions[0]
-	return &HotspotInfo{
-		Score:  top.Score,
-		Center: [2]float64{top.CenterLat, top.CenterLng},
-		Radius: top.Radius,
-	}
+	return active
 }
 
 // accumWindow is the number of seconds to look back when accumulating unit positions.
@@ -277,7 +287,11 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 
 	// Accumulate DataType=1 position records over a sliding window.
 	// Each record only contains ~26 units; we need multiple seconds to see all.
-	unitMap := make(map[uint16]decoder.UnitPosition)
+	type unitEntry struct {
+		pos decoder.UnitPosition
+		ts  string // timestamp of the position record this unit came from
+	}
+	unitMap := make(map[uint16]unitEntry)
 	var actualTs string
 
 	rows, err := s.db.Query(
@@ -301,7 +315,7 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		}
 		actualTs = rowTs // last (most recent) timestamp
 		for _, u := range decoder.DecodePositionFrame(blob) {
-			unitMap[u.ID] = u // newer records overwrite older ones
+			unitMap[u.ID] = unitEntry{pos: u, ts: rowTs} // newer records overwrite older ones
 		}
 	}
 
@@ -335,9 +349,14 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		actualTs = ts
 	}
 
-	// Convert map to slice, resolve coordinates, attach names, HP, and class
+	// Convert map to slice, resolve coordinates, attach names, HP, and class.
+	// Use per-unit position timestamps to reconcile alive/dead with HP timeline.
 	units := make([]decoder.UnitPosition, 0, len(unitMap))
-	for _, u := range unitMap {
+	for _, ue := range unitMap {
+		u := ue.pos
+		posTs := ue.ts
+		posAlive := u.Alive // raw position alive flag (flags[3] == 0xFE/0xFF)
+
 		lat, lng := s.resolver.Convert(u.RawLat, u.RawLng)
 		if s.resolver.Mode() == decoder.CoordWGS84 {
 			u.Lat = lat
@@ -352,7 +371,12 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		u.Class = s.unitClasses.Get(int(u.ID))
 
 		// Apply HP from timeline: find latest hit event for this unit <= actualTs.
-		// HP timeline is the source of truth for alive/dead status.
+		// Reconcile with position alive flag using per-unit timestamps:
+		// - If position data is more recent than the last HP event, trust position flags
+		//   (handles respawns/revivals that don't generate a 0x41 event).
+		// - If HP event is more recent, trust HP for alive/dead determination.
+		// - Proof-of-life override: if the unit fired a shot after their recorded death,
+		//   they must have respawned — force alive.
 		if timeline, ok := s.hpTimeline[int(u.ID)]; ok {
 			// Binary search for the latest entry <= actualTs
 			lo, hi := 0, len(timeline)-1
@@ -367,9 +391,46 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 				}
 			}
 			if bestIdx >= 0 {
+				lastEventTs := timeline[bestIdx].Ts
 				u.HP = timeline[bestIdx].HP
-				// HP is authoritative: override the raw position flag
-				u.Alive = u.HP > 0
+
+				if posTs >= lastEventTs {
+					// Position data recorded AT or AFTER the last HP event —
+					// position alive flag is authoritative.
+					if posAlive && u.HP <= 0 {
+						u.HP = 100 // respawned without explicit revive event
+					} else if !posAlive && u.HP > 0 {
+						u.HP = 0 // died without a recorded kill event
+					}
+					u.Alive = posAlive
+				} else {
+					// HP event is more recent — HP determines alive/dead
+					u.Alive = u.HP > 0
+				}
+
+				// Proof-of-life: if unit is marked dead but fired a shot AFTER their
+				// death event and before/at actualTs, they must have respawned.
+				if !u.Alive {
+					if shootTimes, ok := s.shooterAliveTs[int(u.ID)]; ok {
+						// Binary search: latest shoot time <= actualTs
+						sLo, sHi := 0, len(shootTimes)-1
+						sBest := -1
+						for sLo <= sHi {
+							sMid := (sLo + sHi) / 2
+							if shootTimes[sMid] <= actualTs {
+								sBest = sMid
+								sLo = sMid + 1
+							} else {
+								sHi = sMid - 1
+							}
+						}
+						if sBest >= 0 && shootTimes[sBest] > lastEventTs {
+							// Unit fired after recorded death → alive
+							u.Alive = true
+							u.HP = 100
+						}
+					}
+				}
 			}
 		}
 
@@ -379,13 +440,34 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 	// Collect events: default window is actualTs..ts (1-second)
 	events := s.collectEvents(actualTs, ts)
 
+	// Frame-level cross-reference: if a unit appears as shooter (SrcID) in this
+	// frame's events but is marked dead, force alive. This is a belt-and-suspenders
+	// safety net — the HP timeline proof-of-life should handle most cases, but the
+	// frame events may fall in a gap between position records.
+	shooterInFrame := make(map[uint16]bool)
+	for _, ev := range events {
+		if ev.SrcID != 0 && ev.SrcID != ev.DstID && (ev.Type == "kill" || ev.Type == "hit") {
+			shooterInFrame[uint16(ev.SrcID)] = true
+		}
+	}
+	if len(shooterInFrame) > 0 {
+		for i := range units {
+			if !units[i].Alive && shooterInFrame[units[i].ID] {
+				units[i].Alive = true
+				if units[i].HP <= 0 {
+					units[i].HP = 100
+				}
+			}
+		}
+	}
+
 	frame := &Frame{
-		Type:    "frame",
-		Ts:      actualTs,
-		Units:   units,
-		Events:  events,
-		Hotspot: s.HotspotAt(actualTs),
-		POIs:    pois,
+		Type:     "frame",
+		Ts:       actualTs,
+		Units:    units,
+		Events:   events,
+		Hotspots: s.ActiveHotspots(actualTs),
+		POIs:     pois,
 	}
 
 	if data, err := json.Marshal(frame); err == nil {
@@ -395,46 +477,23 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 	return frame, nil
 }
 
-// collectEvents gathers all hit/kill events with fromTs < ev.Ts <= toTs.
+// collectEvents gathers all hit/kill events with fromTs <= ev.Ts <= toTs.
+// Uses binary search on sorted hitTimestamps for O(log N + K) performance
+// instead of O(N) full scan.
 func (s *Service) collectEvents(fromTs, toTs string) []decoder.GameEvent {
 	events := make([]decoder.GameEvent, 0)
-	for _, evts := range s.hitEventsByTs {
-		for _, ev := range evts {
-			if ev.Ts > fromTs && ev.Ts <= toTs {
-				events = append(events, ev)
-			}
+
+	// Binary search for the first timestamp >= fromTs
+	startIdx := sort.SearchStrings(s.hitTimestamps, fromTs)
+
+	for i := startIdx; i < len(s.hitTimestamps); i++ {
+		ts := s.hitTimestamps[i]
+		if ts > toTs {
+			break
 		}
+		events = append(events, s.hitEventsByTs[ts]...)
 	}
-	// Also include exact-match events at toTs boundary
-	if evts, ok := s.hitEventsByTs[toTs]; ok {
-		for _, ev := range evts {
-			found := false
-			for _, existing := range events {
-				if existing.Ts == ev.Ts && existing.SrcID == ev.SrcID && existing.DstID == ev.DstID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				events = append(events, ev)
-			}
-		}
-	}
-	// Include exact-match events at fromTs boundary (for single-second frames)
-	if evts, ok := s.hitEventsByTs[fromTs]; ok {
-		for _, ev := range evts {
-			found := false
-			for _, existing := range events {
-				if existing.Ts == ev.Ts && existing.SrcID == ev.SrcID && existing.DstID == ev.DstID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				events = append(events, ev)
-			}
-		}
-	}
+
 	return events
 }
 

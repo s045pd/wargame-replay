@@ -1,49 +1,29 @@
 import { useEffect, useRef } from 'react';
-import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
+import { useI18n } from '../lib/i18n';
 
-const AUTO_SWITCH_THRESHOLD = 0.3;
-const SWITCH_COOLDOWN_MS = 5000;
+const SWITCH_COOLDOWN_MS = 6000;
 
+/**
+ * AutoSwitch — pure UI component for the director sidebar.
+ * Displays the auto-director toggle, hotspot score bar, and countdown timer.
+ *
+ * All camera-switching, score-setting, and hotspot tracking logic lives in
+ * useHotspotDirector (the single source of truth). This component only reads
+ * from the director store and renders controls.
+ */
 export function AutoSwitch() {
-  const { hotspot } = usePlayback();
   const {
     autoMode,
     toggleAutoMode,
     hotspotScore,
     nextSwitchCountdown,
     lastSwitchTime,
-    setTargetCamera,
-    setHotspotScore,
     setNextSwitchCountdown,
-    recordSwitch,
   } = useDirector();
+  const { t } = useI18n();
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Update hotspot score from playback
-  useEffect(() => {
-    if (hotspot) {
-      setHotspotScore(hotspot.score);
-    } else {
-      setHotspotScore(0);
-    }
-  }, [hotspot, setHotspotScore]);
-
-  // Auto-switch logic
-  useEffect(() => {
-    if (!autoMode || !hotspot) return;
-    if (hotspot.score < AUTO_SWITCH_THRESHOLD) return;
-
-    const now = Date.now();
-    const timeSinceLastSwitch = now - lastSwitchTime;
-    if (timeSinceLastSwitch < SWITCH_COOLDOWN_MS) return;
-
-    // Trigger camera switch to hotspot center
-    const [cx, cy] = hotspot.center;
-    setTargetCamera({ x: cx, y: cy, zoom: 8 });
-    recordSwitch();
-  }, [autoMode, hotspot, lastSwitchTime, setTargetCamera, recordSwitch]);
 
   // Countdown ticker
   useEffect(() => {
@@ -51,18 +31,15 @@ export function AutoSwitch() {
       clearInterval(countdownRef.current);
       countdownRef.current = null;
     }
-
     if (!autoMode) {
       setNextSwitchCountdown(0);
       return;
     }
-
     countdownRef.current = setInterval(() => {
       const elapsed = Date.now() - lastSwitchTime;
       const remaining = Math.max(0, SWITCH_COOLDOWN_MS - elapsed);
       setNextSwitchCountdown(Math.ceil(remaining / 1000));
     }, 250);
-
     return () => {
       if (countdownRef.current !== null) {
         clearInterval(countdownRef.current);
@@ -75,9 +52,8 @@ export function AutoSwitch() {
 
   return (
     <div className="space-y-3">
-      <div className="text-xs text-zinc-500 uppercase tracking-wider">Auto Switch</div>
+      <div className="text-xs text-zinc-500 uppercase tracking-wider">{t('auto_director')}</div>
 
-      {/* Toggle */}
       <button
         onClick={toggleAutoMode}
         className={`w-full py-1.5 text-xs font-medium rounded transition-colors ${
@@ -86,13 +62,12 @@ export function AutoSwitch() {
             : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
         }`}
       >
-        {autoMode ? 'Auto: ON' : 'Auto: OFF'}
+        {autoMode ? t('auto_on') : t('auto_off')}
       </button>
 
-      {/* Hotspot score bar */}
       <div>
         <div className="flex justify-between text-xs text-zinc-500 mb-1">
-          <span>Hotspot</span>
+          <span>{t('hotspot')}</span>
           <span>{scorePercent}%</span>
         </div>
         <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
@@ -103,17 +78,13 @@ export function AutoSwitch() {
             style={{ width: `${scorePercent}%` }}
           />
         </div>
-        {scorePercent >= 30 && (
-          <div className="text-xs text-amber-400 mt-1">Above threshold</div>
-        )}
       </div>
 
-      {/* Countdown */}
       {autoMode && (
         <div className="flex justify-between text-xs">
-          <span className="text-zinc-500">Next switch in</span>
+          <span className="text-zinc-500">{t('next_switch')}</span>
           <span className="text-zinc-300 font-mono">
-            {nextSwitchCountdown > 0 ? `${nextSwitchCountdown}s` : 'Ready'}
+            {nextSwitchCountdown > 0 ? `${nextSwitchCountdown}s` : t('ready')}
           </span>
         </div>
       )}

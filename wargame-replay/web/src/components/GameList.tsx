@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { fetchGames, fetchMeta, GameInfo } from '../lib/api';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { fetchGames, fetchMeta, fetchHotspots, uploadFiles, UploadFileResult, GameInfo } from '../lib/api';
 import { usePlayback } from '../store/playback';
+import { useI18n } from '../lib/i18n';
 
 function calcDuration(startTime: string, endTime: string): string {
   const start = new Date(startTime.replace(' ', 'T'));
@@ -17,18 +18,17 @@ function calcDuration(startTime: string, endTime: string): string {
 }
 
 function formatTime(ts: string): string {
-  // "2026-01-17 11:40:00" -> "11:40"
   const parts = ts.split(' ');
   if (parts.length < 2) return ts;
   return parts[1].slice(0, 5);
 }
 
 function formatDate(ts: string): string {
-  // "2026-01-17 11:40:00" -> "2026-01-17"
   return ts.split(' ')[0] ?? ts;
 }
 
 function GameCard({ game, onSelect }: { game: GameInfo; onSelect: (g: GameInfo) => void }) {
+  const { t } = useI18n();
   const duration = calcDuration(game.startTime, game.endTime);
   const startTime = formatTime(game.startTime);
   const endTime = formatTime(game.endTime);
@@ -39,22 +39,16 @@ function GameCard({ game, onSelect }: { game: GameInfo; onSelect: (g: GameInfo) 
       onClick={() => onSelect(game)}
       className="w-full text-left bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-600 rounded-xl p-5 transition-all duration-150 group focus:outline-none focus:ring-2 focus:ring-blue-500"
     >
-      {/* Session name */}
       <div className="text-lg font-bold text-zinc-100 group-hover:text-white mb-3">
-        Session {game.session}
+        {t('session')} {game.session}
       </div>
-
-      {/* Stats row */}
       <div className="flex flex-wrap items-center gap-4 mb-3">
-        {/* Player count */}
         <div className="flex items-center gap-1.5 text-sm text-zinc-300">
           <svg className="w-4 h-4 text-zinc-500" fill="currentColor" viewBox="0 0 20 20">
             <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
           </svg>
-          <span>{game.playerCount} players</span>
+          <span>{game.playerCount} {t('players')}</span>
         </div>
-
-        {/* Duration */}
         {duration && (
           <div className="flex items-center gap-1.5 text-sm text-zinc-300">
             <svg className="w-4 h-4 text-zinc-500" fill="currentColor" viewBox="0 0 20 20">
@@ -64,8 +58,6 @@ function GameCard({ game, onSelect }: { game: GameInfo; onSelect: (g: GameInfo) 
           </div>
         )}
       </div>
-
-      {/* Time range */}
       <div className="flex items-center gap-2 text-sm text-zinc-400 mb-3">
         <svg className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
@@ -76,8 +68,6 @@ function GameCard({ game, onSelect }: { game: GameInfo; onSelect: (g: GameInfo) 
         <span className="text-zinc-600">→</span>
         <span className="font-mono text-zinc-300">{endTime}</span>
       </div>
-
-      {/* Filename */}
       <div className="text-xs text-zinc-600 truncate font-mono">
         {game.filename}
       </div>
@@ -85,8 +75,132 @@ function GameCard({ game, onSelect }: { game: GameInfo; onSelect: (g: GameInfo) 
   );
 }
 
+function UploadZone({ onUploaded }: { onUploaded: (g: GameInfo) => void }) {
+  const { t } = useI18n();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [results, setResults] = useState<UploadFileResult[]>([]);
+
+  const handleFiles = useCallback(async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList).filter(
+      f => f.name.endsWith('.db') || f.name.endsWith('.txt'),
+    );
+    if (files.length === 0) {
+      setResults([{ filename: '', status: 'error', message: t('upload_no_valid') }]);
+      return;
+    }
+    setUploading(true);
+    setResults([]);
+    try {
+      const res = await uploadFiles(files);
+      setResults(res);
+      // Notify parent for each successfully imported game
+      for (const r of res) {
+        if (r.status === 'ok' && r.game) onUploaded(r.game);
+      }
+    } catch (e: unknown) {
+      setResults([{ filename: '', status: 'error', message: String(e instanceof Error ? e.message : e) }]);
+    } finally {
+      setUploading(false);
+    }
+  }, [onUploaded, t]);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    if (e.dataTransfer.files.length > 0) void handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(true);
+  }, []);
+
+  const onDragLeave = useCallback(() => setDragging(false), []);
+
+  const onChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) void handleFiles(files);
+    if (fileRef.current) fileRef.current.value = '';
+  }, [handleFiles]);
+
+  const okCount = results.filter(r => r.status === 'ok').length;
+  const errCount = results.filter(r => r.status === 'error').length;
+
+  return (
+    <div className="w-full max-w-lg">
+      <div
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onClick={() => fileRef.current?.click()}
+        className={`relative cursor-pointer border-2 border-dashed rounded-xl p-6 text-center transition-all duration-150 ${
+          dragging
+            ? 'border-blue-500 bg-blue-500/10'
+            : 'border-zinc-700 hover:border-zinc-500 bg-zinc-900/50 hover:bg-zinc-900'
+        }`}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".db,.txt"
+          multiple
+          onChange={onChange}
+          className="hidden"
+        />
+
+        {uploading ? (
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-6 h-6 border-2 border-zinc-500 border-t-blue-400 rounded-full animate-spin" />
+            <span className="text-sm text-zinc-400">{t('uploading')}</span>
+          </div>
+        ) : (
+          <>
+            <svg className="w-8 h-8 mx-auto text-zinc-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p className="text-sm text-zinc-400">
+              {dragging ? t('drop_here') : t('upload_hint')}
+            </p>
+            <p className="text-[10px] text-zinc-600 mt-1 font-mono">
+              {t('file_pattern_hint')}
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* Upload results */}
+      {results.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {/* Summary */}
+          <div className={`px-3 py-1.5 rounded-lg text-xs text-center ${
+            errCount === 0
+              ? 'bg-emerald-900/40 border border-emerald-700/60 text-emerald-300'
+              : okCount > 0
+                ? 'bg-amber-900/40 border border-amber-700/60 text-amber-300'
+                : 'bg-red-900/40 border border-red-700/60 text-red-300'
+          }`}>
+            {okCount > 0 && <span>{t('upload_ok_count').replace('{n}', String(okCount))}</span>}
+            {okCount > 0 && errCount > 0 && <span> · </span>}
+            {errCount > 0 && <span>{t('upload_err_count').replace('{n}', String(errCount))}</span>}
+          </div>
+          {/* Per-file details */}
+          {results.filter(r => r.status === 'error').map((r, i) => (
+            <div key={i} className="px-3 py-1 bg-red-900/30 border border-red-800/40 rounded text-[10px] text-red-400 truncate">
+              {r.filename && <span className="font-mono">{r.filename}: </span>}
+              {r.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function GameList() {
-  const { setGame } = usePlayback();
+  const { setGame, setAllHotspots } = usePlayback();
+  const { t } = useI18n();
   const [games, setGames] = useState<GameInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,8 +218,12 @@ export function GameList() {
     if (selecting) return;
     setSelecting(g.id);
     try {
-      const meta = await fetchMeta(g.id);
+      const [meta, hotspots] = await Promise.all([
+        fetchMeta(g.id),
+        fetchHotspots(g.id),
+      ]);
       setGame(g.id, meta);
+      setAllHotspots(hotspots ?? []);
     } catch (e: unknown) {
       setError(String(e));
       setSelecting(null);
@@ -114,43 +232,36 @@ export function GameList() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {/* Header */}
       <div className="border-b border-zinc-800 px-6 py-4 flex items-center">
-        <div className="text-sm font-bold text-zinc-100 tracking-wider">WARGAME REPLAY</div>
+        <div className="text-sm font-bold text-zinc-100 tracking-wider">{t('app_title')}</div>
       </div>
-
-      {/* Content */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-        <h1 className="text-2xl font-bold text-zinc-100 mb-2">Select a Game</h1>
-        <p className="text-sm text-zinc-500 mb-8">Choose a session to replay</p>
+        <h1 className="text-2xl font-bold text-zinc-100 mb-2">{t('select_game')}</h1>
+        <p className="text-sm text-zinc-500 mb-8">{t('choose_session')}</p>
 
-        {/* Error state */}
         {error && (
           <div className="mb-6 px-4 py-3 bg-red-900/40 border border-red-700/60 rounded-lg text-sm text-red-300 max-w-md w-full text-center">
             {error}
           </div>
         )}
 
-        {/* Loading state */}
         {loading && (
           <div className="flex flex-col items-center gap-3 text-zinc-500">
             <div className="w-6 h-6 border-2 border-zinc-700 border-t-zinc-400 rounded-full animate-spin" />
-            <span className="text-sm">Loading games…</span>
+            <span className="text-sm">{t('loading_games')}</span>
           </div>
         )}
 
-        {/* Empty state */}
         {!loading && !error && games.length === 0 && (
           <div className="flex flex-col items-center gap-2 text-zinc-500 max-w-sm text-center">
             <svg className="w-12 h-12 text-zinc-700 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
             </svg>
-            <p className="text-sm font-medium text-zinc-400">No games found</p>
-            <p className="text-xs text-zinc-600">Place .db files in the server directory.</p>
+            <p className="text-sm font-medium text-zinc-400">{t('no_games')}</p>
+            <p className="text-xs text-zinc-600">{t('no_games_hint')}</p>
           </div>
         )}
 
-        {/* Game cards */}
         {!loading && games.length > 0 && (
           <div className="w-full max-w-lg space-y-3">
             {games.map(g => (
@@ -163,6 +274,13 @@ export function GameList() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Upload zone — always visible when not loading */}
+        {!loading && (
+          <div className="mt-6">
+            <UploadZone onUploaded={(g) => setGames(prev => [...prev, g])} />
           </div>
         )}
       </div>

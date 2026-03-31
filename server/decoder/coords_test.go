@@ -22,7 +22,7 @@ func TestResolverFromDB(t *testing.T) {
 	}
 	defer db.Close()
 
-	resolver, mode, err := AutoDetectCoords(db)
+	resolver, mode, err := AutoDetectCoords(db, "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db")
 	if err != nil {
 		t.Fatal(err)
 	}

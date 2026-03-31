@@ -2,7 +2,10 @@ package decoder
 
 import (
 	"database/sql"
+	"encoding/json"
 	"math"
+	"os"
+	"strings"
 )
 
 type CoordResolver interface {
@@ -46,12 +49,63 @@ func (r *WGS84Resolver) Convert(rawLat, rawLng uint32) (float64, float64) {
 
 func (r *WGS84Resolver) Mode() CoordMode { return CoordWGS84 }
 
-// AutoDetectCoords tries common Chinese coordinate transforms
-func AutoDetectCoords(db *sql.DB) (CoordResolver, CoordMode, error) {
+// MapMeta is the metadata from the .txt sidecar file next to the .db
+type MapMeta struct {
+	OK            bool    `json:"OK"`
+	CenterOK      bool    `json:"CenterOK"`
+	CenterLat     float64 `json:"CenterLat"`
+	CenterLng     float64 `json:"CenterLng"`
+	MaxNativeZoom int     `json:"MaxNativeZoom"`
+	GratCR        int     `json:"GratCR"`
+	GratLatBegin  float64 `json:"GratLatBegin"`
+	GratLatSpace  float64 `json:"GratLatSpace"`
+	GratLngBegin  float64 `json:"GratLngBegin"`
+	GratLngSpace  float64 `json:"GratLngSpace"`
+}
+
+// LoadMapMeta reads the .txt sidecar file for a .db file.
+func LoadMapMeta(dbPath string) (*MapMeta, error) {
+	txtPath := strings.TrimSuffix(dbPath, ".db") + ".txt"
+	data, err := os.ReadFile(txtPath)
+	if err != nil {
+		return nil, err
+	}
+	var meta MapMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+	if !meta.OK || !meta.CenterOK {
+		return nil, nil
+	}
+	return &meta, nil
+}
+
+// AutoDetectCoords determines the coordinate resolver.
+// If a .txt sidecar file exists, it uses the center coordinates to compute
+// the offset between raw database values and WGS84.
+func AutoDetectCoords(db *sql.DB, dbPath string) (CoordResolver, CoordMode, error) {
 	var minLat, maxLat, minLng, maxLng uint32
 	err := scanCoordBounds(db, &minLat, &maxLat, &minLng, &maxLng)
 	if err != nil {
 		return nil, CoordRelative, err
+	}
+
+	// If a .txt metadata file exists, use the known encoding:
+	// raw = (WGS84 + 180) × 1e6  →  WGS84 = raw × 1e-6 - 180
+	if _, err := LoadMapMeta(dbPath); err == nil {
+		return &WGS84Resolver{
+			LatScale: 1e-6, LatOffset: -180,
+			LngScale: 1e-6, LngOffset: -180,
+		}, CoordWGS84, nil
+	}
+
+	// Fallback: heuristic auto-detection
+
+	// Try: raw * 1e-6 - 180 (common encoding: (WGS84 + 180) × 1e6)
+	testLat6 := float64(minLat)*1e-6 - 180
+	testLng6 := float64(minLng)*1e-6 - 180
+	if testLat6 > -90 && testLat6 < 90 && testLng6 > -180 && testLng6 < 180 {
+		return &WGS84Resolver{LatScale: 1e-6, LatOffset: -180, LngScale: 1e-6, LngOffset: -180}, CoordWGS84, nil
 	}
 
 	// Try: raw / 1e7 directly
@@ -81,7 +135,6 @@ func scanCoordBounds(db *sql.DB, minLat, maxLat, minLng, maxLng *uint32) error {
 	rows, err := db.Query(`
 		SELECT LogData FROM record
 		WHERE SrcType=1 AND DataType=1 AND LogData IS NOT NULL
-		ORDER BY LogTime LIMIT 100
 	`)
 	if err != nil {
 		return err

@@ -95,14 +95,14 @@ func ComputeHotspots(db *sql.DB, idx *index.TimeIndex, resolver decoder.CoordRes
 	// Sample ~500 frames evenly across the timeline.
 	step := max(1, idx.Len()/500)
 	var frames []HotspotFrame
-	var prevPositions map[uint8][2]float64
+	var prevPositions map[uint16][2]float64
 
 	for i := 0; i < idx.Len(); i += step {
 		ts, _ := idx.TimestampAt(i)
 		grid.Reset()
 
 		units := queryFrame(db, ts)
-		curPositions := make(map[uint8][2]float64, len(units))
+		curPositions := make(map[uint16][2]float64, len(units))
 
 		for _, u := range units {
 			if u.RawLat == 0 && u.RawLng == 0 {

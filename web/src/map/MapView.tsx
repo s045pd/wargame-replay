@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { UnitPosition } from '../lib/api';
+import { UnitPosition, UNIT_CLASS_LABELS, UnitClass } from '../lib/api';
 import { UnitLayer } from './UnitLayer';
 import { TrailLayer } from './TrailLayer';
+import { HotspotLayer } from './HotspotLayer';
+import { BaseCampLayer } from './BaseCampLayer';
+import { GraticuleLayer } from './GraticuleLayer';
+import { BombingLayer } from './BombingLayer';
+import { POILayer } from './POILayer';
 import { EventToastOverlay } from './EventToastOverlay';
 import { MAP_STYLES, MapStyleKey } from './styles';
 import { TargetCamera } from '../store/director';
@@ -16,37 +21,18 @@ interface MapViewProps {
   targetCamera?: TargetCamera | null;
 }
 
-function computeBounds(units: UnitPosition[]): mapboxgl.LngLatBoundsLike | null {
-  const geo = units.filter(u => u.lng !== undefined && u.lat !== undefined);
-  if (geo.length === 0) return null;
-
-  let minLng = Infinity, maxLng = -Infinity;
-  let minLat = Infinity, maxLat = -Infinity;
-
-  for (const u of geo) {
-    if (u.lng! < minLng) minLng = u.lng!;
-    if (u.lng! > maxLng) maxLng = u.lng!;
-    if (u.lat! < minLat) minLat = u.lat!;
-    if (u.lat! > maxLat) maxLat = u.lat!;
-  }
-
-  // Add some padding
-  const padLng = Math.max((maxLng - minLng) * 0.1, 0.01);
-  const padLat = Math.max((maxLat - minLat) * 0.1, 0.01);
-
-  return [
-    [minLng - padLng, minLat - padLat],
-    [maxLng + padLng, maxLat + padLat],
-  ];
-}
-
 export function MapView({ units, targetCamera }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const fittedRef = useRef(false);
+  // Guard against StrictMode double-init: only create map once
+  const initedRef = useRef(false);
+  const mapReadyCalledRef = useRef(false);
 
   const {
+    meta,
+    currentTs,
     mapStyle,
     trailEnabled,
     selectedUnitId,
@@ -54,13 +40,16 @@ export function MapView({ units, targetCamera }: MapViewProps) {
     setSelectedUnitId,
     setFollowSelectedUnit,
     events,
+    hotspot,
+    pois,
   } = usePlayback();
 
   const currentStyleRef = useRef<MapStyleKey>(mapStyle);
 
-  // Initialize map
+  // Initialize map — guarded against StrictMode double-invocation
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || initedRef.current) return;
+    initedRef.current = true;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
@@ -74,7 +63,13 @@ export function MapView({ units, targetCamera }: MapViewProps) {
 
     mapRef.current = map;
 
-    map.on('load', () => {
+    function onStyleReady() {
+      if (mapReadyCalledRef.current) return;
+      mapReadyCalledRef.current = true;
+
+      // Ensure correct canvas size after container layout
+      map.resize();
+
       // Add 3D terrain if supported
       try {
         map.addSource('mapbox-dem', {
@@ -89,25 +84,55 @@ export function MapView({ units, targetCamera }: MapViewProps) {
       }
 
       // Atmosphere for globe projection
-      map.setFog({
-        color: 'rgb(10, 10, 20)',
-        'high-color': 'rgb(20, 30, 60)',
-        'horizon-blend': 0.04,
-        'space-color': 'rgb(0, 0, 10)',
-        'star-intensity': 0.6,
-      });
+      try {
+        map.setFog({
+          color: 'rgb(10, 10, 20)',
+          'high-color': 'rgb(20, 30, 60)',
+          'horizon-blend': 0.04,
+          'space-color': 'rgb(0, 0, 10)',
+          'star-intensity': 0.6,
+        });
+      } catch {
+        // Fog not available
+      }
 
       setMapReady(true);
-    });
+
+      // Use meta bounds for immediate camera positioning (no waiting for frame data)
+      const { meta } = usePlayback.getState();
+      const bounds = meta?.bounds;
+      if (bounds) {
+        const padLat = Math.max((bounds.maxLat - bounds.minLat) * 0.15, 0.0003);
+        const padLng = Math.max((bounds.maxLng - bounds.minLng) * 0.15, 0.0003);
+        map.fitBounds(
+          [[bounds.minLng - padLng, bounds.minLat - padLat],
+           [bounds.maxLng + padLng, bounds.maxLat + padLat]],
+          { animate: false, maxZoom: 20 },
+        );
+        fittedRef.current = true;
+      }
+    }
+
+    // Multiple paths to detect style ready — StrictMode can prevent `load` from firing.
+    map.on('load', onStyleReady);
+    map.on('style.load', onStyleReady);
+
+    // Fallback poll: check isStyleLoaded() periodically
+    const pollInterval = setInterval(() => {
+      if (mapReadyCalledRef.current) {
+        clearInterval(pollInterval);
+        return;
+      }
+      if (map.isStyleLoaded()) {
+        clearInterval(pollInterval);
+        onStyleReady();
+      }
+    }, 300);
 
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
-    return () => {
-      map.remove();
-      mapRef.current = null;
-      setMapReady(false);
-      fittedRef.current = false;
-    };
+    // No cleanup — map persists for the lifetime of this component mount.
+    // StrictMode's double-invocation is handled by initedRef guard above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -150,18 +175,6 @@ export function MapView({ units, targetCamera }: MapViewProps) {
     });
   }, [mapStyle, mapReady]);
 
-  // Fit bounds once we have unit positions
-  useEffect(() => {
-    if (!mapRef.current || !mapReady || fittedRef.current) return;
-    if (units.length === 0) return;
-
-    const bounds = computeBounds(units);
-    if (bounds) {
-      mapRef.current.fitBounds(bounds, { padding: 60, duration: 1500 });
-      fittedRef.current = true;
-    }
-  }, [units, mapReady]);
-
   // Fly to director target camera
   useEffect(() => {
     if (!mapRef.current || !mapReady || !targetCamera) return;
@@ -195,10 +208,45 @@ export function MapView({ units, targetCamera }: MapViewProps) {
       <div ref={containerRef} className="w-full h-full" />
       {mapReady && mapRef.current && (
         <>
+          {/* Graticule grid — bottom layer */}
+          {meta?.graticule && (
+            <GraticuleLayer
+              map={mapRef.current}
+              graticule={meta.graticule}
+              bounds={meta.bounds}
+            />
+          )}
+          {/* Base camp markers */}
+          {meta?.baseCamps && meta.baseCamps.length > 0 && (
+            <BaseCampLayer
+              map={mapRef.current}
+              baseCamps={meta.baseCamps}
+            />
+          )}
+          <HotspotLayer
+            map={mapRef.current}
+            hotspot={hotspot}
+          />
+          {/* Bombing events — timed markers */}
+          {meta?.bombingEvents && meta.bombingEvents.length > 0 && (
+            <BombingLayer
+              map={mapRef.current}
+              bombingEvents={meta.bombingEvents}
+              currentTs={currentTs}
+            />
+          )}
+          {/* Battlefield POIs (control points, supply, vehicles) */}
+          {pois && pois.length > 0 && (
+            <POILayer
+              map={mapRef.current}
+              pois={pois}
+            />
+          )}
           <TrailLayer
             map={mapRef.current}
             units={units}
             trailEnabled={trailEnabled}
+            events={events}
           />
           <UnitLayer
             map={mapRef.current}
@@ -211,9 +259,34 @@ export function MapView({ units, targetCamera }: MapViewProps) {
           />
           <EventToastOverlay events={events} />
 
+          {/* Team scoreboard - top right */}
+          {units.length > 0 && (() => {
+            const redAlive = units.filter(u => u.team === 'red' && u.alive).length;
+            const redTotal = units.filter(u => u.team === 'red').length;
+            const blueAlive = units.filter(u => u.team === 'blue' && u.alive).length;
+            const blueTotal = units.filter(u => u.team === 'blue').length;
+            return (
+              <div className="absolute top-4 right-14 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-3 py-2 text-xs font-mono backdrop-blur-sm">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                    <span className="text-red-400 font-bold">{redAlive}</span>
+                    <span className="text-zinc-500">/{redTotal}</span>
+                  </div>
+                  <span className="text-zinc-600">vs</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-cyan-500 inline-block" />
+                    <span className="text-cyan-400 font-bold">{blueAlive}</span>
+                    <span className="text-zinc-500">/{blueTotal}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Selected unit info panel */}
           {selectedUnit && (
-            <div className="absolute top-4 left-4 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-200 backdrop-blur-sm">
+            <div className="absolute top-4 left-4 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-200 backdrop-blur-sm min-w-[200px]">
               <div className="flex items-center gap-2 mb-1">
                 <span
                   className="w-2 h-2 rounded-full inline-block"
@@ -221,10 +294,11 @@ export function MapView({ units, targetCamera }: MapViewProps) {
                     backgroundColor: selectedUnit.team === 'red' ? '#ff4444' : selectedUnit.team === 'blue' ? '#00ccff' : '#aaaaaa',
                   }}
                 />
-                <span className="font-bold">Unit {selectedUnit.id}</span>
+                <span className="font-bold">{selectedUnit.name || `#${selectedUnit.id}`}</span>
                 <span className="text-zinc-500">({selectedUnit.team})</span>
+                <span className="text-zinc-400 text-[10px]">{UNIT_CLASS_LABELS[(selectedUnit.class || 'rifle') as UnitClass]}</span>
                 <button
-                  className="ml-2 text-zinc-500 hover:text-zinc-200 text-xs"
+                  className="ml-auto text-zinc-500 hover:text-zinc-200 text-xs"
                   onClick={() => {
                     setSelectedUnitId(null);
                     setFollowSelectedUnit(false);
@@ -233,6 +307,22 @@ export function MapView({ units, targetCamera }: MapViewProps) {
                 >
                   ×
                 </button>
+              </div>
+              {/* HP bar */}
+              <div className="mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-500">HP</span>
+                  <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${(selectedUnit.hp / 100) * 100}%`,
+                        backgroundColor: selectedUnit.hp > 40 ? '#22c55e' : selectedUnit.hp > 20 ? '#eab308' : '#ef4444',
+                      }}
+                    />
+                  </div>
+                  <span className="text-zinc-400 w-6 text-right">{selectedUnit.hp}</span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -247,7 +337,7 @@ export function MapView({ units, targetCamera }: MapViewProps) {
                   {followSelectedUnit ? 'Following' : 'Follow'}
                 </button>
                 {!selectedUnit.alive && (
-                  <span className="text-red-500 text-xs">DEAD</span>
+                  <span className="text-red-500 text-xs font-bold">KIA</span>
                 )}
               </div>
             </div>

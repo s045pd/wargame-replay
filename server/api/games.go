@@ -28,6 +28,10 @@ func NewHandler(dataDir string) (*Handler, error) {
 }
 
 func (h *Handler) ListGames(c *gin.Context) {
+	if h.games == nil {
+		c.JSON(http.StatusOK, []scanner.GameInfo{})
+		return
+	}
 	c.JSON(http.StatusOK, h.games)
 }
 

@@ -67,6 +67,8 @@ func main() {
 	r.PUT("/api/games/:id/clips/:idx", handler.UpdateClip)
 	r.DELETE("/api/games/:id/clips/:idx", handler.DeleteClip)
 	r.GET("/api/games/:id/clips/:idx/export", handler.ExportClip)
+	r.GET("/api/games/:id/unitclasses", handler.GetUnitClasses)
+	r.PUT("/api/games/:id/unitclasses", handler.SetUnitClasses)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	serveStatic(r)

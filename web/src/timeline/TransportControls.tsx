@@ -3,20 +3,34 @@ import { usePlayback } from '../store/playback';
 
 const SPEEDS = [1, 2, 4, 8, 16] as const;
 
-/** Format an ISO timestamp string as HH:MM:SS */
-function formatTime(ts: string): string {
-  if (!ts) return '--:--:--';
-  const d = new Date(ts);
-  if (isNaN(d.getTime())) return '--:--:--';
-  return d.toISOString().slice(11, 19);
+/** Parse a DB timestamp "YYYY-MM-DD HH:MM:SS" as a local Date */
+function parseDbTs(ts: string): Date {
+  return new Date(ts.replace(' ', 'T'));
 }
 
-/** Add seconds to an ISO timestamp string, clamped to [min, max] */
+/** Format a DB timestamp string as HH:MM:SS (local time) */
+function formatTime(ts: string): string {
+  if (!ts) return '--:--:--';
+  const d = parseDbTs(ts);
+  if (isNaN(d.getTime())) return '--:--:--';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Format a Date back to "YYYY-MM-DD HH:MM:SS" in local time (matching DB format) */
+function toDbTs(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Add seconds to a DB timestamp string, clamped to [min, max] */
 function addSeconds(ts: string, seconds: number, min: string, max: string): string {
-  const ms = new Date(ts).getTime() + seconds * 1000;
-  const minMs = new Date(min).getTime();
-  const maxMs = new Date(max).getTime();
-  return new Date(Math.max(minMs, Math.min(maxMs, ms))).toISOString();
+  const d = parseDbTs(ts);
+  d.setSeconds(d.getSeconds() + seconds);
+  const minD = parseDbTs(min);
+  const maxD = parseDbTs(max);
+  const clamped = new Date(Math.max(minD.getTime(), Math.min(maxD.getTime(), d.getTime())));
+  return toDbTs(clamped);
 }
 
 interface TransportControlsProps {

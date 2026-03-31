@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { GameMeta, UnitPosition, Frame } from '../lib/api';
+import { GameMeta, GameEvent, UnitPosition, Frame, POIObject } from '../lib/api';
 import { GameWebSocket } from '../lib/ws';
 import { MapStyleKey } from '../map/styles';
 
@@ -18,8 +18,9 @@ interface PlaybackState {
 
   // Frame data
   units: UnitPosition[];
-  events: unknown[];
+  events: GameEvent[];
   hotspot: Frame['hotspot'];
+  pois: POIObject[];
 
   // Map UI state
   mapStyle: MapStyleKey;
@@ -54,6 +55,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   units: [],
   events: [],
   hotspot: undefined,
+  pois: [],
   mapStyle: 'dark',
   trailEnabled: true,
   selectedUnitId: null,
@@ -77,6 +79,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       units: [],
       events: [],
       hotspot: undefined,
+      pois: [],
     });
   },
 
@@ -87,17 +90,22 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     ws.onMessage((data) => {
       const msg = data as Record<string, unknown>;
       if (msg['type'] === 'state') {
+        const ts = msg['ts'] as string;
         set({
           connected: true,
           coordMode: msg['coordMode'] as 'wgs84' | 'relative',
-          currentTs: msg['ts'] as string,
+          currentTs: ts,
         });
+        // Fetch initial frame so the map can zoom to unit positions
+        ws.send({ cmd: 'seek', to: ts });
       } else if (msg['type'] === 'frame') {
+        const units = msg['units'] as UnitPosition[];
         set({
           currentTs: msg['ts'] as string,
-          units: msg['units'] as UnitPosition[],
-          events: msg['events'] as unknown[],
+          units,
+          events: (msg['events'] as GameEvent[]) ?? [],
           hotspot: msg['hotspot'] as Frame['hotspot'],
+          pois: (msg['pois'] as POIObject[]) ?? [],
         });
       }
     });

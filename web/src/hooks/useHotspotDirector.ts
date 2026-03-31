@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useHotspotFilter } from '../store/hotspotFilter';
+import type { MapStyleKey } from '../map/styles';
 import type { HotspotEvent } from '../lib/api';
 
 /** Minimum real-time milliseconds between camera switches */
@@ -71,8 +72,20 @@ export function useHotspotDirector() {
     setHotspotScore,
     recordSwitch,
     setActiveHotspotId,
+    activateFocusMode,
+    deactivateFocusMode,
   } = useDirector();
   const { typeFilters } = useHotspotFilter();
+
+  /** Exit focus mode and restore the previous map style */
+  const exitFocusMode = () => {
+    const fm = useDirector.getState().focusMode;
+    if (!fm.active) return;
+    deactivateFocusMode();
+    if (fm.previousMapStyle) {
+      usePlayback.getState().setMapStyle(fm.previousMapStyle as MapStyleKey);
+    }
+  };
 
   const lastHotspotIdRef = useRef<number | null>(null);
   const preTrackingIdRef = useRef<number | null>(null); // hotspot ID we're pre-tracking for
@@ -116,6 +129,8 @@ export function useHotspotDirector() {
           originalSpeedRef.current = null;
           slowdownActiveRef.current = false;
         }
+        // Exit focus mode
+        exitFocusMode();
         setHotspotScore(0);
       }
       return;
@@ -182,6 +197,8 @@ export function useHotspotDirector() {
         originalSpeedRef.current = null;
         slowdownActiveRef.current = false;
       }
+      // Exit focus mode
+      exitFocusMode();
       setHotspotScore(0);
       return;
     }
@@ -243,6 +260,14 @@ export function useHotspotDirector() {
         }
       }
 
+      // --- Activate focus mode: dark map + highlight killer & targets ---
+      const { mapStyle } = usePlayback.getState();
+      const relatedIds = (best.units || []).filter(id => id !== best.focusUnitId);
+      activateFocusMode(best.focusUnitId, relatedIds, mapStyle);
+      if (mapStyle !== 'dark') {
+        usePlayback.getState().setMapStyle('dark');
+      }
+
       recordSwitch();
       return;
     }
@@ -260,6 +285,8 @@ export function useHotspotDirector() {
       originalSpeedRef.current = null;
       slowdownActiveRef.current = false;
     }
+    // Exit focus mode when switching to non-personal hotspot
+    exitFocusMode();
 
     if (best.centerLat === 0 && best.centerLng === 0) return;
 
@@ -274,5 +301,6 @@ export function useHotspotDirector() {
     lastSwitchTime, typeFilters,
     setTargetCamera, setHotspotScore, recordSwitch,
     setSelectedUnitId, setFollowSelectedUnit, setSpeed, setActiveHotspotId,
+    activateFocusMode, deactivateFocusMode,
   ]);
 }

@@ -14,7 +14,7 @@ func cacheFilePath(dbPath string) string {
 // LoadCache attempts to read a previously computed hotspot result from disk.
 // It returns nil, false if the cache is absent, unreadable, or stale (DB file
 // is newer than the cache file).
-func LoadCache(dbPath string) ([]HotspotFrame, bool) {
+func LoadCache(dbPath string) ([]HotspotEvent, bool) {
 	cachePath := cacheFilePath(dbPath)
 
 	cacheInfo, err := os.Stat(cachePath)
@@ -38,15 +38,19 @@ func LoadCache(dbPath string) ([]HotspotFrame, bool) {
 	}
 	defer f.Close()
 
-	var frames []HotspotFrame
-	if err := json.NewDecoder(f).Decode(&frames); err != nil {
+	var events []HotspotEvent
+	if err := json.NewDecoder(f).Decode(&events); err != nil {
 		return nil, false
 	}
-	return frames, true
+	// Reject empty cached results — force recomputation
+	if len(events) == 0 {
+		return nil, false
+	}
+	return events, true
 }
 
-// SaveCache serialises the hotspot frames to the sidecar cache file.
-func SaveCache(dbPath string, frames []HotspotFrame) error {
+// SaveCache serialises the hotspot events to the sidecar cache file.
+func SaveCache(dbPath string, events []HotspotEvent) error {
 	cachePath := cacheFilePath(dbPath)
 
 	f, err := os.Create(cachePath)
@@ -55,7 +59,7 @@ func SaveCache(dbPath string, frames []HotspotFrame) error {
 	}
 	defer f.Close()
 
-	if err := json.NewEncoder(f).Encode(frames); err != nil {
+	if err := json.NewEncoder(f).Encode(events); err != nil {
 		return err
 	}
 

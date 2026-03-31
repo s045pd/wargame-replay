@@ -1,7 +1,8 @@
 import { Play, Pause, SkipForward, SkipBack, ChevronDown } from 'lucide-react';
 import { usePlayback } from '../store/playback';
+import { useI18n } from '../lib/i18n';
 
-const SPEEDS = [1, 2, 4, 8, 16] as const;
+const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128] as const;
 
 /** Parse a DB timestamp "YYYY-MM-DD HH:MM:SS" as a local Date */
 function parseDbTs(ts: string): Date {
@@ -39,6 +40,7 @@ interface TransportControlsProps {
 
 export function TransportControls({ immersive: _immersive }: TransportControlsProps) {
   const { playing, speed, currentTs, meta, play, pause, seek, setSpeed } = usePlayback();
+  const { t } = useI18n();
 
   const handleSkip = (delta: number) => {
     if (!meta) return;
@@ -93,7 +95,7 @@ export function TransportControls({ immersive: _immersive }: TransportControlsPr
 
       {/* Speed selector */}
       <div className="relative ml-auto flex items-center gap-1">
-        <span className="text-xs text-zinc-500">Speed</span>
+        <span className="text-xs text-zinc-500">{t('speed')}</span>
         <div className="relative">
           <select
             value={speed}
@@ -112,7 +114,7 @@ export function TransportControls({ immersive: _immersive }: TransportControlsPr
       </div>
 
       {/* H key hint */}
-      <span className="text-[10px] text-zinc-600 hidden sm:block">H = immersive</span>
+      <span className="text-[10px] text-zinc-600 hidden sm:block">{t('immersive_hint')}</span>
     </div>
   );
 }

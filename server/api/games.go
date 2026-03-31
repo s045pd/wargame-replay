@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"wargame-replay/server/game"
 	"wargame-replay/server/scanner"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type Handler struct {
+	mu       sync.RWMutex
 	games    []scanner.GameInfo
 	services map[string]*game.Service // gameID → service
 	dataDir  string
@@ -28,11 +30,14 @@ func NewHandler(dataDir string) (*Handler, error) {
 }
 
 func (h *Handler) ListGames(c *gin.Context) {
-	if h.games == nil {
+	h.mu.RLock()
+	games := h.games
+	h.mu.RUnlock()
+	if games == nil {
 		c.JSON(http.StatusOK, []scanner.GameInfo{})
 		return
 	}
-	c.JSON(http.StatusOK, h.games)
+	c.JSON(http.StatusOK, games)
 }
 
 func (h *Handler) GetMeta(c *gin.Context) {
@@ -51,10 +56,23 @@ func (h *Handler) GetHotspots(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, svc.Hotspots())
+	c.JSON(http.StatusOK, svc.HotspotEvents())
 }
 
 func (h *Handler) GetService(gameID string) (*game.Service, error) {
+	// Fast path: read lock
+	h.mu.RLock()
+	if svc, ok := h.services[gameID]; ok {
+		h.mu.RUnlock()
+		return svc, nil
+	}
+	h.mu.RUnlock()
+
+	// Slow path: write lock, load game
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Double-check after acquiring write lock
 	if svc, ok := h.services[gameID]; ok {
 		return svc, nil
 	}
@@ -69,4 +87,16 @@ func (h *Handler) GetService(gameID string) (*game.Service, error) {
 		}
 	}
 	return nil, fmt.Errorf("game %s not found", gameID)
+}
+
+// AddGame registers a new game at runtime (used by file upload).
+func (h *Handler) AddGame(info scanner.GameInfo) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.games = append(h.games, info)
+}
+
+// DataDir returns the data directory path.
+func (h *Handler) DataDir() string {
+	return h.dataDir
 }

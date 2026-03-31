@@ -1,0 +1,43 @@
+# Binaries
+wargame-replay
+wargame-server
+*.exe
+
+# Build artifacts
+web/dist/
+server/static/
+
+# Dependencies
+web/node_modules/
+
+# Environment
+web/.env
+web/.env.local
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files (large, user data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Sidecar files
+*.hotspots.cache
+*.clips.json
+*.bookmarks.json
+*.unitclasses.json
+
+# Temporary
+*.uploading
+/tmp/
+
+# Claude
+.claude/

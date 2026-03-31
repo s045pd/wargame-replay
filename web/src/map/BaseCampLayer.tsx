@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'mapbox-gl';
 import { BaseCamp } from '../lib/api';
 
 interface BaseCampLayerProps {
@@ -19,9 +19,9 @@ function teamColor(team: string): string {
 }
 
 function teamLabel(team: string): string {
-  if (team === 'red') return '红方大本营';
-  if (team === 'blue') return '蓝方大本营';
-  return '大本营';
+  if (team === 'red') return '红方基地 Base';
+  if (team === 'blue') return '蓝方基地 Base';
+  return '基地 Base';
 }
 
 function buildGeoJson(baseCamps: BaseCamp[]): GeoJSON.FeatureCollection {

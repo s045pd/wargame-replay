@@ -81,7 +81,7 @@ func ScanDirectory(dir string) ([]GameInfo, error) {
 		info.FilePath = filepath.Join(dir, e.Name())
 
 		// Read player count from tag table
-		playerCount, _ := readPlayerCount(info.FilePath)
+		playerCount, _ := ReadPlayerCount(info.FilePath)
 		info.PlayerCount = playerCount
 
 		games = append(games, *info)
@@ -89,7 +89,8 @@ func ScanDirectory(dir string) ([]GameInfo, error) {
 	return games, nil
 }
 
-func readPlayerCount(dbPath string) (int, error) {
+// ReadPlayerCount opens the database at dbPath and returns the distinct player count.
+func ReadPlayerCount(dbPath string) (int, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return 0, err

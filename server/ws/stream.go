@@ -40,6 +40,33 @@ type streamState struct {
 	svc      *game.Service
 }
 
+// tickParams computes the tick interval and frame step for the given speed.
+//
+// At low speeds (1–16x) we deliver one frame per game-second, so the tick
+// interval equals 1/speed seconds (minimum 60 ms).
+// At high speeds (>16x) we cap the frame rate at ~16 fps and increase the
+// step so that units trace their actual trajectory instead of teleporting.
+func tickParams(speed int) (interval time.Duration, step int) {
+	if speed <= 0 {
+		speed = 1
+	}
+	const maxFPS = 16
+	if speed <= maxFPS {
+		interval = time.Second / time.Duration(speed)
+		if interval < 60*time.Millisecond {
+			interval = 60 * time.Millisecond
+		}
+		return interval, 1
+	}
+	// High-speed mode: cap frame rate, increase step proportionally.
+	interval = time.Second / maxFPS // ~62 ms
+	step = (speed + maxFPS/2) / maxFPS
+	if step < 1 {
+		step = 1
+	}
+	return interval, step
+}
+
 func HandleStream(getService func(string) (*game.Service, error)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		gameID := c.Param("id")
@@ -80,6 +107,8 @@ func HandleStream(getService func(string) (*game.Service, error)) gin.HandlerFun
 			}
 		}()
 
+		// Dynamic ticker: interval adjusts with speed so high-speed playback
+		// delivers many small-step frames instead of one giant jump per second.
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
@@ -90,11 +119,19 @@ func HandleStream(getService func(string) (*game.Service, error)) gin.HandlerFun
 					return
 				}
 				state.handleCommand(cmd, svc, conn)
+				// Adjust ticker to match the new speed
+				state.mu.Lock()
+				if state.playing {
+					interval, _ := tickParams(state.speed)
+					ticker.Reset(interval)
+				}
+				state.mu.Unlock()
 			case <-ticker.C:
 				state.mu.Lock()
 				if state.playing {
+					_, step := tickParams(state.speed)
 					state.sendFrame(conn, svc)
-					state.currentI += state.speed
+					state.currentI += step
 				}
 				state.mu.Unlock()
 			}

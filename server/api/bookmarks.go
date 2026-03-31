@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"wargame-replay/server/hotspot"
 
 	"github.com/gin-gonic/gin"
 )
@@ -145,36 +146,24 @@ func (h *Handler) SuggestBookmarks(c *gin.Context) {
 		return
 	}
 
-	frames := svc.Hotspots()
-	if len(frames) == 0 {
+	events := svc.HotspotEvents()
+	if len(events) == 0 {
 		c.JSON(http.StatusOK, []Bookmark{})
 		return
 	}
 
-	// Collect all MaxScore values and sort to find the 90th percentile threshold.
-	scores := make([]float64, len(frames))
-	for i, f := range frames {
-		scores[i] = float64(f.MaxScore)
-	}
-	sorted := make([]float64, len(scores))
-	copy(sorted, scores)
-	sort.Float64s(sorted)
-
-	p90idx := int(float64(len(sorted)) * 0.90)
-	if p90idx >= len(sorted) {
-		p90idx = len(sorted) - 1
-	}
-	threshold := sorted[p90idx]
+	// Use detected hotspot events as bookmark suggestions, sorted by score.
+	sorted := make([]hotspot.HotspotEvent, len(events))
+	copy(sorted, events)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Score > sorted[j].Score })
 
 	var suggestions []Bookmark
-	for _, f := range frames {
-		if float64(f.MaxScore) >= threshold {
-			suggestions = append(suggestions, Bookmark{
-				Ts:    f.Ts,
-				Title: "High activity at " + f.Ts,
-				Tags:  []string{"auto", "hotspot"},
-			})
-		}
+	for _, h := range sorted {
+		suggestions = append(suggestions, Bookmark{
+			Ts:    h.PeakTs,
+			Title: h.Label,
+			Tags:  []string{"auto", h.Type},
+		})
 	}
 
 	// Deduplicate nearby timestamps (keep at most one per minute).

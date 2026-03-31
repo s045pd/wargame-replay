@@ -2,12 +2,21 @@ import { useEffect, useRef, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { UnitPosition, UnitClass, UNIT_CLASS_LABELS } from '../lib/api';
 import { registerUnitIcons, iconName } from './unitIcons';
+import type { FocusMode } from '../store/director';
+
+/** Focus info passed to the GeoJSON builder (Set for O(1) lookup) */
+interface FocusInfo {
+  active: boolean;
+  focusUnitId: number;
+  relatedIds: Set<number>;
+}
 
 interface UnitLayerProps {
   map: mapboxgl.Map;
   units: UnitPosition[];
   selectedUnitId?: number | null;
   speed?: number;
+  focusMode?: FocusMode;
   onSelectUnit?: (id: number | null) => void;
 }
 
@@ -76,6 +85,7 @@ function buildAnimatedGeoJson(
   states: Map<number, UnitVisualState>,
   now: number,
   posLerpMs: number = POS_LERP_MS,
+  focus?: FocusInfo,
 ): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -191,6 +201,30 @@ function buildAnimatedGeoJson(
           visuallyDead = 1;
         }
 
+        // --- Focus mode visual adjustments ---
+        let showLabel = 0; // 1 = always show name label (even if not selected)
+        let deadIconOpacity = 0.5; // default dead unit opacity
+        if (focus?.active) {
+          if (u.id === focus.focusUnitId) {
+            // ★ Focus unit (the killer): gold glow, full brightness, name visible
+            glowRadius = Math.max(glowRadius, 18);
+            glowOpacity = Math.max(glowOpacity, 0.55);
+            glowColor = '#ffaa00'; // gold
+            iconScale = Math.max(iconScale, 1.15);
+            showLabel = 1;
+          } else if (focus.relatedIds.has(u.id)) {
+            // ● Related targets: moderately dimmed, name visible, fade when dead
+            aliveIconOpacity *= 0.75;
+            deadIconOpacity = 0.3;
+            showLabel = 1;
+          } else {
+            // ○ Background units: very dim, no label
+            aliveIconOpacity *= 0.1;
+            glowOpacity *= 0.1;
+            deadIconOpacity = 0.06;
+          }
+        }
+
         return {
           type: 'Feature' as const,
           geometry: {
@@ -212,6 +246,8 @@ function buildAnimatedGeoJson(
             aliveIconOpacity,
             iconScale,
             selected: u.id === selectedUnitId ? 1 : 0,
+            showLabel,
+            deadIconOpacity,
             iconAlive: iconName(u.team, cls, false, displayHP),
             iconDead: iconName(u.team, cls, true, 0),
           },
@@ -233,7 +269,7 @@ function adaptiveLerpMs(speed: number): number {
   return Math.max(40, Math.min(POS_LERP_MS, tickMs * 0.85));
 }
 
-export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit }: UnitLayerProps) {
+export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, onSelectUnit }: UnitLayerProps) {
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const onSelectUnitRef = useRef(onSelectUnit);
   onSelectUnitRef.current = onSelectUnit;
@@ -243,6 +279,20 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
   selectedRef.current = selectedUnitId;
   const speedRef = useRef(speed);
   speedRef.current = speed;
+
+  // Stable focus info ref — convert relatedUnitIds to Set once for O(1) lookup
+  const focusModeRef = useRef(focusMode);
+  focusModeRef.current = focusMode;
+  const focusInfoRef = useRef<FocusInfo>({ active: false, focusUnitId: -1, relatedIds: new Set() });
+  if (focusMode?.active) {
+    focusInfoRef.current = {
+      active: true,
+      focusUnitId: focusMode.focusUnitId,
+      relatedIds: new Set(focusMode.relatedUnitIds),
+    };
+  } else {
+    focusInfoRef.current = { active: false, focusUnitId: -1, relatedIds: new Set() };
+  }
 
   // --- Per-unit visual states ---
   const visualStatesRef = useRef<Map<number, UnitVisualState & { _posStart?: number }>>(new Map());
@@ -259,6 +309,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
     const now = performance.now();
     const geojson = buildAnimatedGeoJson(
       unitsRef.current, selectedRef.current, visualStatesRef.current, now,
+      POS_LERP_MS, focusInfoRef.current,
     );
 
     map.addSource(SOURCE_ID, {
@@ -310,7 +361,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
         'icon-ignore-placement': true,
       },
       paint: {
-        'icon-opacity': 0.5,
+        'icon-opacity': ['get', 'deadIconOpacity'],
       },
     });
 
@@ -330,12 +381,12 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
       },
     });
 
-    // Callsign label for selected unit
+    // Callsign label for selected or focus-highlighted units
     map.addLayer({
       id: LABEL_LAYER_ID,
       type: 'symbol',
       source: SOURCE_ID,
-      filter: ['==', ['get', 'selected'], 1],
+      filter: ['any', ['==', ['get', 'selected'], 1], ['==', ['get', 'showLabel'], 1]],
       layout: {
         'text-field': ['concat', ['get', 'name'], ' (', ['get', 'classLabel'], ')'],
         'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
@@ -574,7 +625,10 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
         const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
         if (source) {
           source.setData(
-            buildAnimatedGeoJson(unitsRef.current, selectedRef.current, states, now, curLerp),
+            buildAnimatedGeoJson(
+              unitsRef.current, selectedRef.current, states, now, curLerp,
+              focusInfoRef.current,
+            ),
           );
         }
 
@@ -588,7 +642,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, onSelectUnit 
       rafRef.current = requestAnimationFrame(animate);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, units, selectedUnitId]);
+  }, [map, units, selectedUnitId, focusMode?.active, focusMode?.focusUnitId]);
 
   return null;
 }

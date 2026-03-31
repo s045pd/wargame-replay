@@ -24,6 +24,21 @@ export interface CameraHistoryEntry {
 /** Maximum camera history entries to keep */
 const MAX_CAMERA_HISTORY = 500;
 
+/** Focus mode — activated during killstreak personal hotspots */
+export interface FocusMode {
+  active: boolean;
+  focusUnitId: number;          // the killstreak player
+  relatedUnitIds: number[];     // targets (hit/killed units)
+  previousMapStyle: string;     // to restore when exiting focus mode
+}
+
+const FOCUS_MODE_OFF: FocusMode = {
+  active: false,
+  focusUnitId: -1,
+  relatedUnitIds: [],
+  previousMapStyle: '',
+};
+
 interface DirectorState {
   mode: AppMode;
   autoMode: boolean;
@@ -36,6 +51,8 @@ interface DirectorState {
   activeHotspotId: number | null;
   /** Camera switch history for timeline track visualization */
   cameraHistory: CameraHistoryEntry[];
+  /** Focus mode state for killstreak highlight effect */
+  focusMode: FocusMode;
 
   // Actions
   setMode: (mode: AppMode) => void;
@@ -46,6 +63,8 @@ interface DirectorState {
   recordSwitch: () => void;
   setActiveHotspotId: (id: number | null) => void;
   clearCameraHistory: () => void;
+  activateFocusMode: (focusUnitId: number, relatedUnitIds: number[], currentMapStyle: string) => void;
+  deactivateFocusMode: () => void;
 }
 
 export const useDirector = create<DirectorState>((set) => ({
@@ -58,6 +77,7 @@ export const useDirector = create<DirectorState>((set) => ({
   lastSwitchTime: 0,
   activeHotspotId: null,
   cameraHistory: [],
+  focusMode: FOCUS_MODE_OFF,
 
   setMode: (mode) => set({ mode }),
 
@@ -86,4 +106,16 @@ export const useDirector = create<DirectorState>((set) => ({
   setActiveHotspotId: (id) => set({ activeHotspotId: id }),
 
   clearCameraHistory: () => set({ cameraHistory: [] }),
+
+  activateFocusMode: (focusUnitId, relatedUnitIds, currentMapStyle) =>
+    set({
+      focusMode: {
+        active: true,
+        focusUnitId,
+        relatedUnitIds,
+        previousMapStyle: currentMapStyle,
+      },
+    }),
+
+  deactivateFocusMode: () => set({ focusMode: FOCUS_MODE_OFF }),
 }));

@@ -58,8 +58,8 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
     [allHotspots, typeFilters],
   );
 
-  // Read targetCamera + activeHotspotId from director store
-  const { targetCamera: directorCamera, activeHotspotId, autoMode } = useDirector();
+  // Read targetCamera + activeHotspotId + focusMode from director store
+  const { targetCamera: directorCamera, activeHotspotId, autoMode, focusMode } = useDirector();
   const targetCamera = targetCameraProp ?? directorCamera;
 
   // Find the hotspot currently being tracked for the map indicator
@@ -459,6 +459,7 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
             units={units}
             selectedUnitId={selectedUnitId}
             speed={speed}
+            focusMode={focusMode}
             onSelectUnit={(id) => {
               setSelectedUnitId(id);
               if (id === null) setFollowSelectedUnit(false);

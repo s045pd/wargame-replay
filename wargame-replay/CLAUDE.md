@@ -14,13 +14,13 @@ cd web && npm run dev                              # Vite dev server (proxies /a
 
 # Backend only
 cd server && go vet ./...                          # lint
-cd server && go test ./...                         # all tests
+cd server && go test -race ./...                   # all tests (race detector)
 cd server && go test ./decoder -run TestDecode     # single test
 cd server && CGO_ENABLED=1 go build -o ../wargame-replay .
 
 # Frontend only
 cd web && npx tsc -b                               # type check (strict: noUnusedLocals, erasableSyntaxOnly)
-cd web && npm run lint                              # eslint
+cd web && npm run lint                              # eslint (flat config, eslint 9)
 cd web && npm run build                             # tsc -b + vite build → web/dist/
 ```
 
@@ -50,18 +50,20 @@ cd web && npm run build                             # tsc -b + vite build → we
 - **`game/`** — `Service` wraps a single `.db` file. Lazy-loaded via `api.Handler` with double-check locking under `sync.RWMutex`. Frame JSON cached in 100MB LRU. `collectEvents` uses binary search on sorted `hitTimestamps` for O(log N + K) lookup.
 - **`hotspot/`** — Detection pipeline: temporal clustering (≤45s gap) → split long clusters (>180s) → score/classify → density-based center (150m radius) → deduplication (≥30s overlap + ≤200m). Results cached in `.hotspots.cache` sidecar files.
 - **`scanner/`** — Scans directory for `.db` files matching `{session}_{YYYY-MM-DD-HH-MM-SS}_{YYYY-MM-DD-HH-MM-SS}.db`. Game ID = first 4 bytes of SHA256(filename) as hex.
-- **`index/`** — `TimeIndex` provides binary-search frame lookup. `LRUCache` stores marshaled frame JSON.
+- **`index/`** — `TimeIndex` provides binary-search frame lookup. `LRUCache` stores marshaled frame JSON (100MB limit).
 - **`api/`** — Gin handlers. `Handler` struct holds `sync.RWMutex`-protected game list and lazy-loaded service map. Upload endpoint validates filename pattern, writes atomically (`.uploading` temp file → rename).
 - **`ws/`** — Single WebSocket handler. `tickParams(speed)` calculates frame delivery rate, capping at ~16 fps for high speeds.
 
 ### Frontend Architecture
 
-- **State**: Zustand stores — `playback.ts` (connection, frames, map UI), `director.ts` (camera mode), `clips.ts` (bookmarks/clips), `hotspotFilter.ts`, `i18n.ts` (zh/en).
-- **Map layers**: Each layer (`UnitLayer`, `HotspotLayer`, `TrailLayer`, `POILayer`, `BaseCampLayer`, `BombingLayer`, `GraticuleLayer`) is a React component receiving the Mapbox `map` instance and data as props. Icons are Canvas-drawn at runtime (`unitIcons.ts`, `poiIcons.ts`) and registered via `map.addImage()`.
-- **Director mode**: `useHotspotDirector` hook auto-selects camera targets from hotspot events. `DirectorPanel` shows preview grid + `HotspotEventTabs` (5 types: firefight, killstreak, mass_casualty, engagement, bombardment).
+- **State**: Zustand stores — `playback.ts` (connection, frames, map UI, visual effects), `director.ts` (camera mode, focus, slowdown), `clips.ts` (bookmarks/clips), `hotspotFilter.ts` (visibility toggles).
+- **Map layers**: 15 layers — `UnitLayer`, `TrailLayer`, `HotspotLayer`, `HotspotActivityCircle`, `BaseCampLayer`, `BombingLayer`, `POILayer`, `GraticuleLayer`, `SniperTracerLayer`, `EventToastOverlay`, `KillLeaderboard`, `PlayerSearch`, `HotspotControlPanel`, `RelativeCanvas`. Each receives the MapLibre `map` instance and data as props.
+- **Unit icons**: Canvas-drawn at runtime (`unitIcons.ts`, `poiIcons.ts`) — 5 classes (rifle, mg, sniper, medic, marksman) × 2 teams × alive/dead. Registered via `map.addImage()`.
+- **Director mode**: `useHotspotDirector` hook (450 LOC) auto-selects camera targets with pre-tracking (8s), focus mode (dark map + slowdown), cooldown (6s ±30% jitter), manual override priority.
 - **WebSocket client** (`lib/ws.ts`): `GameWebSocket` class with auto-reconnect (2s). Playback store subscribes to `frame`/`state` messages.
-- **Coordinate handling**: `coordMode` (`wgs84` | `relative`) flows from server meta through the store; `MapView` renders for WGS84, `RelativeCanvas` for relative.
-- **TypeScript**: `import type * as mapboxgl from 'mapbox-gl'` (not default import) due to `erasableSyntaxOnly` + `noUnusedLocals` in tsconfig.
+- **Coordinate handling**: `coordMode` (`wgs84` | `relative`) flows from server meta; `MapView` for WGS84, `RelativeCanvas` for relative.
+- **i18n**: `lib/i18n.ts` — Zustand store with `zh`/`en` locale, `t(key)` helper, `toggleLang()`.
+- **TypeScript**: `import type * as maplibregl from 'maplibre-gl'` (not default import) due to `erasableSyntaxOnly` + `noUnusedLocals` in tsconfig.
 
 ### Sidecar Files
 
@@ -75,3 +77,117 @@ Each `.db` game file may have companion files in the same directory:
 ### Team Convention
 
 Unit IDs < 500 = red team, ≥ 500 = blue team. This is hardcoded in `decoder/position.go:decodeTeam` and `game/service.go:buildPlayerList`.
+
+### Binary Protocol
+
+- **Position** (DT=1): 15 bytes/unit — ID(2) + Lat(4) + Lng(4) + Flags(5: alive, class, ammo, supply, revive)
+- **Events** (DT=2/5): variable-length — kill/hit/revive/heal with attacker/victim IDs
+- **POIs** (DT=8): 31 bytes/entry — ID, coords, type(base/vehicle/supply/control/station), team, resource
+- **Graticule CR encoding**: `cr=0x100E` → high_byte+2=18 cols (R→A), low_byte+1=15 rows (1→15)
+
+### Key Algorithms
+
+- **Frame assembly**: 5s sliding window + HP reconciliation via binary search on event timeline — O(N × log E)
+- **Hotspot detection**: temporal clustering (45s gap) → split (180s) → classify → spatial center (150m density) → deduplicate (30s+200m)
+- **Auto-director**: pre-track(8s) → active hotspot collection → priority(critical>normal) → weighted random(score^1.5) → focus mode(seek+dark+slow+lock) → cooldown(6s±jitter)
+
+## CI/CD
+
+### CI Pipeline (ci.yml)
+
+Triggered on push/PR to main:
+1. `test-backend`: `go vet ./...` + `go test -race -count=1 ./...`
+2. `test-frontend`: `tsc -b` + `npm run lint`
+3. `build`: full build + smoke test (start server → kill)
+
+**Note**: Backend tests that require a `.db` file use `os.Stat()` + `t.Skip()` so CI passes without test data.
+
+### Release Pipeline (release.yml)
+
+Triggered on tag `v*`:
+1. 6-platform matrix build (Linux/macOS/Windows × x64/ARM64)
+2. Cross-compilation via Zig CC (Linux + Windows targets)
+3. Windows → `.zip`, Unix → `.tar.gz`
+4. GitHub Release with checksums
+
+### Version Control
+
+```bash
+make release V=v1.0.0      # tag + push → auto build + release
+```
+
+Version injected: `go build -ldflags="-X main.version=v1.0.0"`. Query via `GET /api/health`.
+
+### Windows Executable Resources
+
+`server/winres/` + `go-winres make --arch amd64,386,arm64` generates `.syso` files that `go build` auto-links into Windows binaries, embedding:
+- Application icon (256px + 16px)
+- Version metadata (FileDescription, ProductName, etc.)
+- Manifest (DPI awareness, long path support)
+
+## Repository Structure
+
+This is a **git subtree** setup:
+- Local repo root: parent directory containing `wargame-replay/` subdirectory
+- Remote `origin/main`: flat structure (no `wargame-replay/` prefix)
+- Push command: `git subtree push --prefix=wargame-replay origin main`
+
+## Testing
+
+### Backend Tests
+
+```bash
+cd server && go test -race ./...
+```
+
+Tests that need `.db` files have `os.Stat()` guard + `t.Skip()` — safe in CI without test data.
+
+### Frontend Checks
+
+```bash
+cd web && npx tsc -b        # type checking
+cd web && npm run lint       # eslint
+```
+
+No unit tests yet — lint + type check only.
+
+### Smoke Test
+
+CI builds the full binary and starts/stops it to verify the embed + serve cycle works:
+```bash
+./wargame-replay -port 0 &
+sleep 1
+kill %1
+```
+
+## Common Tasks
+
+### Adding a new API endpoint
+
+1. Add handler method to `api/*.go` (follow existing patterns)
+2. Register route in `main.go` router setup
+3. Add TypeScript types + fetch function in `web/src/lib/api.ts`
+4. Connect to Zustand store or component
+
+### Adding a new map layer
+
+1. Create `web/src/map/NewLayer.tsx` component
+2. Accept `map: maplibregl.Map` + data props
+3. Use `useEffect` to add/update GeoJSON source + layer
+4. Render in `MapView.tsx` alongside other layers
+
+### Adding a hotspot type
+
+1. Add classification logic in `hotspot/engine.go:classifyCluster()`
+2. Add type string to `HotspotEvent.Type`
+3. Update frontend type in `lib/api.ts`
+4. Add icon/color in `map/HotspotLayer.tsx`
+5. Add i18n key in `lib/i18n.ts`
+
+### Regenerating Windows resources
+
+```bash
+cd server && go-winres make --arch amd64,386,arm64
+```
+
+Updates `.syso` files. Commit them — they're small (~24KB each).

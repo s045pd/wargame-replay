@@ -16,12 +16,15 @@ web/.env.local
 
 # IDE
 .idea/
+.vscode/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # Database files (large, user data)
 *.db
@@ -29,7 +32,7 @@ Thumbs.db
 *.db-wal
 *.db-shm
 
-# Sidecar files
+# Sidecar files (generated alongside .db)
 *.hotspots.cache
 *.clips.json
 *.bookmarks.json
@@ -39,5 +42,10 @@ Thumbs.db
 *.uploading
 /tmp/
 
-# Claude
+# AI/Agent context
 .claude/
+.superpowers/
+
+# Test coverage
+*.out
+coverage.html

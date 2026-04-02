@@ -1,7 +1,9 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
+import { useVisualConfig } from '../store/visualConfig';
 import { useHotspotFilter } from '../store/hotspotFilter';
+import { isFreeTileStyle } from '../map/styles';
 import { useI18n } from '../lib/i18n';
 import { HotspotEvent } from '../lib/api';
 
@@ -161,10 +163,15 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
       // Seek to peak time and fly camera there
       seek(best.peakTs);
       if (best.centerLat !== 0 || best.centerLng !== 0) {
+        const vc = useVisualConfig.getState();
+        const pb = usePlayback.getState();
+        const maxZ = isFreeTileStyle(pb.mapStyle)
+          ? Math.min(17, vc.freeMaxZoom)
+          : 17;
         useDirector.getState().setTargetCamera({
           lat: best.centerLat,
           lng: best.centerLng,
-          zoom: 17,
+          zoom: maxZ,
         });
       }
     } else {

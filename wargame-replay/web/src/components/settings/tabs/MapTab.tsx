@@ -106,6 +106,7 @@ export function MapTab() {
 
       <SettingGroup title={t('settings_max_zoom')}>
         <SettingSlider label={t('settings_max_zoom')} description={t('settings_desc_max_zoom')} value={vc.maxZoom} onChange={(v) => vc.set('maxZoom', v)} min={10} max={22} />
+        <SettingSlider label={t('settings_free_max_zoom')} description={t('settings_desc_free_max_zoom')} value={vc.freeMaxZoom} onChange={(v) => vc.set('freeMaxZoom', v)} min={12} max={19} />
         <SettingSlider label={t('settings_bounds_padding')} description={t('settings_desc_bounds_padding')} value={vc.boundsPadding} onChange={(v) => vc.set('boundsPadding', v)} min={5} max={30} unit="%" />
       </SettingGroup>
 

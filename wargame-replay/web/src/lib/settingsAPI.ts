@@ -104,6 +104,7 @@ const RANGES: Partial<Record<keyof FullConfig, [number, number]>> = {
   groupZoomPx: [150, 600],
   directorMinZoom: [10, 18],
   directorMaxZoom: [16, 22],
+  freeMaxZoom: [12, 19],
   activityCircleMin: [20, 150],
   activityCircleMax: [100, 600],
 };

@@ -313,3 +313,11 @@ export function getMapStyle(key: MapStyleKey): StyleSpecification {
 }
 
 export const DEFAULT_STYLE: MapStyleKey = 'satellite';
+
+/**
+ * Whether the given style key resolves to free (non-Mapbox) tiles.
+ * True when no token is set, or the style has no Mapbox premium variant.
+ */
+export function isFreeTileStyle(styleKey: MapStyleKey): boolean {
+  return !hasMapboxToken() || !MAPBOX_UPGRADEABLE_KEYS.has(styleKey);
+}

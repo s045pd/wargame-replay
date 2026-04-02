@@ -3,6 +3,7 @@ import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useHotspotFilter } from '../store/hotspotFilter';
 import { useVisualConfig } from '../store/visualConfig';
+import { isFreeTileStyle } from '../map/styles';
 import type { HotspotEvent } from '../lib/api';
 
 /** Pre-parsed hotspot with cached timestamps to avoid repeated Date parsing in hot loops */
@@ -40,15 +41,28 @@ function isCriticalType(hs: HotspotEvent): boolean {
 }
 
 /**
- * Convert a radius in metres to an appropriate Mapbox zoom level.
+ * Get the effective max zoom — capped by freeMaxZoom when using free tiles.
+ */
+function effectiveMaxZoom(): number {
+  const vc = useVisualConfig.getState();
+  const mapStyle = usePlayback.getState().mapStyle;
+  return isFreeTileStyle(mapStyle)
+    ? Math.min(vc.directorMaxZoom, vc.freeMaxZoom)
+    : vc.directorMaxZoom;
+}
+
+/**
+ * Convert a radius in metres to an appropriate zoom level.
  * For personal hotspots we zoom in tighter.
  * Reads target pixel size and zoom bounds from visualConfig.
+ * When using free tiles, caps at freeMaxZoom to avoid "Map data not yet available".
  */
 function radiusToZoom(radiusM: number, personal: boolean): number {
   const vc = useVisualConfig.getState();
   const targetPx = personal ? vc.personalZoomPx : vc.groupZoomPx;
+  const maxZ = effectiveMaxZoom();
   const z = 20 - Math.log2(Math.max(radiusM, 20) / (targetPx * 0.075));
-  return Math.max(vc.directorMinZoom, Math.min(vc.directorMaxZoom, z));
+  return Math.max(vc.directorMinZoom, Math.min(maxZ, z));
 }
 
 /**
@@ -362,9 +376,10 @@ export function useHotspotDirector() {
     cooldownRef.current = jitteredCooldown();
 
     const isPersonal = isPersonalType(best);
+    const maxZ = effectiveMaxZoom();
     const hsZoom = best.radius > 0
       ? radiusToZoom(best.radius, isPersonal || best.type === 'bombardment')
-      : (isPersonal ? 19 : 17);
+      : Math.min(isPersonal ? 19 : 17, maxZ);
 
     // ── Personal hotspot (killstreak / long_range) — focus mode + game-time lock ──
     if (isPersonal) {

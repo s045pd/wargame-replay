@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { usePlayback } from './playback';
+import { usePlayback, savePrefs } from './playback';
+import type { MapStyleKey } from '../map/styles';
 
 export type AppMode = 'replay' | 'director';
 
@@ -24,7 +25,7 @@ export interface CameraHistoryEntry {
 /** Maximum camera history entries to keep */
 const MAX_CAMERA_HISTORY = 500;
 
-/** Focus mode — activated during killstreak personal hotspots */
+/** Focus mode — activated during killstreak / long_range personal hotspots */
 export interface FocusMode {
   active: boolean;
   focusUnitId: number;          // the killstreak player
@@ -39,6 +40,14 @@ const FOCUS_MODE_OFF: FocusMode = {
   previousMapStyle: '',
 };
 
+/** Speed slowdown state managed by auto-director */
+export interface Slowdown {
+  active: boolean;
+  originalSpeed: number | null;  // user's speed before director slowed it
+}
+
+const SLOWDOWN_OFF: Slowdown = { active: false, originalSpeed: null };
+
 interface DirectorState {
   mode: AppMode;
   autoMode: boolean;
@@ -51,10 +60,20 @@ interface DirectorState {
   activeHotspotId: number | null;
   /** Camera switch history for timeline track visualization */
   cameraHistory: CameraHistoryEntry[];
-  /** Focus mode state for killstreak highlight effect */
+  /** Focus mode state for personal hotspot highlight */
   focusMode: FocusMode;
+  /** Director-computed zoom for follow mode (controls MapView chase loop target zoom) */
+  followZoom: number | null;
+  /** Speed slowdown state (replaces ref-based speed bookkeeping) */
+  slowdown: Slowdown;
+  /** True when auto-director is locked to a personal hotspot — switching is forbidden */
+  switchLocked: boolean;
+  /** Whether focus mode should switch to dark map (true) or keep current map style (false) */
+  focusDarkMap: boolean;
+  /** Immersive mode — hides most UI for a cinematic viewing experience */
+  immersive: boolean;
 
-  // Actions
+  // ── Actions ──
   setMode: (mode: AppMode) => void;
   toggleAutoMode: () => void;
   setTargetCamera: (camera: TargetCamera) => void;
@@ -63,11 +82,20 @@ interface DirectorState {
   recordSwitch: () => void;
   setActiveHotspotId: (id: number | null) => void;
   clearCameraHistory: () => void;
+  setFollowZoom: (zoom: number | null) => void;
   activateFocusMode: (focusUnitId: number, relatedUnitIds: number[], currentMapStyle: string) => void;
-  deactivateFocusMode: () => void;
+  /** Exit focus mode: restore map style + clear followZoom + reset state */
+  exitFocusMode: () => void;
+  /** Save current speed as original and apply slow speed */
+  activateSlowdown: (slowSpeed: number) => void;
+  /** Restore original speed and clear slowdown */
+  restoreSpeed: () => void;
+  setSwitchLocked: (locked: boolean) => void;
+  toggleFocusDarkMap: () => void;
+  toggleImmersive: () => void;
 }
 
-export const useDirector = create<DirectorState>((set) => ({
+export const useDirector = create<DirectorState>((set, get) => ({
   mode: 'director',
   autoMode: true,
   currentCamera: null,
@@ -78,6 +106,11 @@ export const useDirector = create<DirectorState>((set) => ({
   activeHotspotId: null,
   cameraHistory: [],
   focusMode: FOCUS_MODE_OFF,
+  followZoom: null,
+  slowdown: SLOWDOWN_OFF,
+  switchLocked: false,
+  focusDarkMap: (() => { try { const p = localStorage.getItem('wargame-prefs'); return p ? JSON.parse(p).focusDarkMap ?? true : true; } catch { return true; } })(),
+  immersive: false,
 
   setMode: (mode) => set({ mode }),
 
@@ -107,15 +140,58 @@ export const useDirector = create<DirectorState>((set) => ({
 
   clearCameraHistory: () => set({ cameraHistory: [] }),
 
+  setFollowZoom: (zoom) => set({ followZoom: zoom }),
+
   activateFocusMode: (focusUnitId, relatedUnitIds, currentMapStyle) =>
-    set({
+    set((state) => ({
       focusMode: {
         active: true,
         focusUnitId,
         relatedUnitIds,
-        previousMapStyle: currentMapStyle,
+        // When already in focus mode, preserve the original pre-focus style
+        // so we don't save 'dark' as the "previous" and lose the real style.
+        previousMapStyle: state.focusMode.active
+          ? state.focusMode.previousMapStyle
+          : currentMapStyle,
       },
-    }),
+    })),
 
-  deactivateFocusMode: () => set({ focusMode: FOCUS_MODE_OFF }),
+  exitFocusMode: () => {
+    const { focusMode: fm } = get();
+    if (!fm.active) return;
+    // Restore map style before clearing state
+    if (fm.previousMapStyle) {
+      const pb = usePlayback.getState();
+      if (pb.mapStyle === 'dark' && fm.previousMapStyle !== 'dark') {
+        pb.setMapStyle(fm.previousMapStyle as MapStyleKey);
+      }
+    }
+    set({ focusMode: FOCUS_MODE_OFF, followZoom: null });
+  },
+
+  activateSlowdown: (slowSpeed) => {
+    const { slowdown } = get();
+    // Capture original speed BEFORE any mutation
+    const originalSpeed = slowdown.active
+      ? slowdown.originalSpeed
+      : usePlayback.getState().speed;
+    // Mark active + save original in a single set() call, then apply slow speed
+    set({ slowdown: { active: true, originalSpeed } });
+    usePlayback.getState().setSpeed(slowSpeed);
+  },
+
+  restoreSpeed: () => {
+    const { slowdown } = get();
+    if (!slowdown.active || slowdown.originalSpeed === null) return;
+    usePlayback.getState().setSpeed(slowdown.originalSpeed);
+    set({ slowdown: SLOWDOWN_OFF });
+  },
+
+  setSwitchLocked: (locked) => set({ switchLocked: locked }),
+  toggleFocusDarkMap: () => set((s) => {
+    const next = !s.focusDarkMap;
+    savePrefs({ focusDarkMap: next });
+    return { focusDarkMap: next };
+  }),
+  toggleImmersive: () => set((s) => ({ immersive: !s.immersive })),
 }));

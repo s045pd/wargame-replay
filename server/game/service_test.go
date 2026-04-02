@@ -1,11 +1,17 @@
 package game
 
 import (
+	"os"
 	"testing"
 )
 
+const testDBPath = "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db"
+
 func TestLoadGame(t *testing.T) {
-	svc, err := LoadGame("../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db")
+	if _, err := os.Stat(testDBPath); err != nil {
+		t.Skip("test db not found:", testDBPath)
+	}
+	svc, err := LoadGame(testDBPath)
 	if err != nil {
 		t.Fatal(err)
 	}

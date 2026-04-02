@@ -11,20 +11,23 @@ const (
 )
 
 type UnitPosition struct {
-	ID       uint16  `json:"id"`
-	RawLat   uint32  `json:"-"`
-	RawLng   uint32  `json:"-"`
-	Lat      float64 `json:"lat,omitempty"`
-	Lng      float64 `json:"lng,omitempty"`
-	X        float64 `json:"x,omitempty"`
-	Y        float64 `json:"y,omitempty"`
-	Team     string  `json:"team"`
-	Alive    bool    `json:"alive"`
-	HP       int     `json:"hp"`
-	Name     string  `json:"name,omitempty"`
-	Class    string  `json:"class"`
-	Flags    []byte  `json:"-"`
-	FlagsHex string  `json:"flags"`
+	ID            uint16  `json:"id"`
+	RawLat        uint32  `json:"-"`
+	RawLng        uint32  `json:"-"`
+	Lat           float64 `json:"lat,omitempty"`
+	Lng           float64 `json:"lng,omitempty"`
+	X             float64 `json:"x,omitempty"`
+	Y             float64 `json:"y,omitempty"`
+	Team          string  `json:"team"`
+	Alive         bool    `json:"alive"`
+	HP            int     `json:"hp"`
+	Ammo          int     `json:"ammo"`
+	Supply        int     `json:"supply"`
+	RevivalTokens int     `json:"revivalTokens"`
+	Name          string  `json:"name,omitempty"`
+	Class         string  `json:"class"`
+	Flags         []byte  `json:"-"`
+	FlagsHex      string  `json:"flags"`
 }
 
 type GameEvent struct {

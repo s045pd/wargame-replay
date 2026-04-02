@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type * as mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'maplibre-gl';
 import { BaseCamp } from '../lib/api';
 
 interface BaseCampLayerProps {
@@ -124,7 +124,7 @@ export function BaseCampLayer({ map, baseCamps }: BaseCampLayerProps) {
         // ignore
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map, addSourceAndLayers]);
 
   // Update data if baseCamps change

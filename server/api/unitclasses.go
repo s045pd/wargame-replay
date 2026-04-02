@@ -35,5 +35,7 @@ func (h *Handler) SetUnitClasses(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// Invalidate cached frames so new class labels take effect immediately
+	svc.ClearFrameCache()
 	c.JSON(http.StatusOK, cfg.GetAll())
 }

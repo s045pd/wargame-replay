@@ -7,6 +7,7 @@ import (
 
 func TestDecodePositionEntry(t *testing.T) {
 	// Known entry: unit 45 (二班 中刀), bytes [0x2D, 0x00] = uint16LE 45
+	// flags = [00 82 FD FE 01]: flags[0]=0 (dead), class=medic (0x82 & 0x07 = 2)
 	raw, _ := hex.DecodeString("2D006A588F0CF3008D110082FDFE01")
 	if len(raw) != 15 {
 		t.Fatalf("expected 15 bytes, got %d", len(raw))
@@ -20,6 +21,63 @@ func TestDecodePositionEntry(t *testing.T) {
 	}
 	if entry.Team != "red" {
 		t.Errorf("expected team red, got %s", entry.Team)
+	}
+	// flags[0] = 0x00 → dead, default HP=0
+	if entry.HP != 0 {
+		t.Errorf("expected HP 0, got %d", entry.HP)
+	}
+	if entry.Alive {
+		t.Error("expected alive=false (flags[0]=0)")
+	}
+	// flags[1] = 0x82 → class = marksman (0x82 & 0x07 = 2)
+	// Ground truth: 红方46号 = 二班 中刀 = 精确射手(marksman)
+	if entry.Class != string(ClassMarksman) {
+		t.Errorf("expected class marksman, got %s", entry.Class)
+	}
+	// flags[2]=0xFD=253 (ammo), flags[3]=0xFE=254 (supply), flags[4]=0x01 (revival tokens)
+	if entry.Ammo != 253 {
+		t.Errorf("expected ammo 253, got %d", entry.Ammo)
+	}
+	if entry.Supply != 254 {
+		t.Errorf("expected supply 254, got %d", entry.Supply)
+	}
+	if entry.RevivalTokens != 1 {
+		t.Errorf("expected revivalTokens 1, got %d", entry.RevivalTokens)
+	}
+}
+
+func TestDecodePositionEntryAlive(t *testing.T) {
+	// Unit 512 (KFN-马鸡, blue medic per ground truth)
+	// flags = [64 84 EE FF 01]: flags[0]=100 (alive), class=medic (0x84 & 0x07 = 4)
+	// Ground truth: 蓝方513号 = KFN-马鸡 = 医疗兵(medic)
+	// Note: flags[0] is an alive/dead indicator, NOT the actual HP value.
+	// Alive units default to HP=100; real HP comes from the event timeline.
+	raw, _ := hex.DecodeString("0002BA758F0CF11D8D116484EEFF01")
+	entry := DecodePositionEntry(raw)
+	if entry.ID != 512 {
+		t.Errorf("expected ID 512, got %d", entry.ID)
+	}
+	if entry.Team != "blue" {
+		t.Errorf("expected team blue, got %s", entry.Team)
+	}
+	if entry.HP != 100 {
+		t.Errorf("expected default HP 100 for alive unit, got %d", entry.HP)
+	}
+	if !entry.Alive {
+		t.Error("expected alive=true (flags[0]>0)")
+	}
+	if entry.Class != string(ClassMedic) {
+		t.Errorf("expected class medic, got %s", entry.Class)
+	}
+	// flags = [64 84 EE FF 01]: flags[2]=0xEE=238 (ammo), flags[3]=0xFF=255 (supply), flags[4]=0x01 (revival tokens)
+	if entry.Ammo != 238 {
+		t.Errorf("expected ammo 238, got %d", entry.Ammo)
+	}
+	if entry.Supply != 255 {
+		t.Errorf("expected supply 255, got %d", entry.Supply)
+	}
+	if entry.RevivalTokens != 1 {
+		t.Errorf("expected revivalTokens 1, got %d", entry.RevivalTokens)
 	}
 }
 

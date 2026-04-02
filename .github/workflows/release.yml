@@ -9,7 +9,6 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: '1.23'
   NODE_VERSION: '20'
   ZIG_VERSION: '0.13.0'
 
@@ -56,7 +55,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -96,13 +96,25 @@ jobs:
             EXT=".exe"
           fi
           go build -trimpath -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
-            -o "../wargame-replay-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" .
+            -o "../wargame-replay${EXT}" .
+
+      # Windows: package as .zip
+      - name: Package (Windows)
+        if: matrix.goos == 'windows'
+        run: |
+          zip "wargame-replay-${{ matrix.goos }}-${{ matrix.goarch }}.zip" wargame-replay.exe
+
+      # Linux / macOS: package as .tar.gz
+      - name: Package (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          tar czf "wargame-replay-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" wargame-replay
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: wargame-replay-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: wargame-replay-*
+          path: wargame-replay-*.*
 
   release:
     needs: build
@@ -139,17 +151,17 @@ jobs:
 
             | 平台 Platform | 文件 File |
             |---|---|
-            | Windows x64 | `wargame-replay-windows-amd64.exe` |
-            | Windows ARM64 | `wargame-replay-windows-arm64.exe` |
-            | macOS Intel | `wargame-replay-darwin-amd64` |
-            | macOS Apple Silicon | `wargame-replay-darwin-arm64` |
-            | Linux x64 | `wargame-replay-linux-amd64` |
-            | Linux ARM64 | `wargame-replay-linux-arm64` |
+            | Windows x64 | `wargame-replay-windows-amd64.zip` |
+            | Windows ARM64 | `wargame-replay-windows-arm64.zip` |
+            | macOS Intel | `wargame-replay-darwin-amd64.tar.gz` |
+            | macOS Apple Silicon | `wargame-replay-darwin-arm64.tar.gz` |
+            | Linux x64 | `wargame-replay-linux-amd64.tar.gz` |
+            | Linux ARM64 | `wargame-replay-linux-arm64.tar.gz` |
 
             ### 使用方法 / Usage
 
             ```bash
-            # 将 .db 对局文件放在同目录下
+            # 解压后将 .db 对局文件放在同目录下
             ./wargame-replay -dir ./data
 
             # 浏览器打开 http://127.0.0.1:8080

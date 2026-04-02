@@ -58,9 +58,10 @@ func tickParams(speed int) (interval time.Duration, step int) {
 		}
 		return interval, 1
 	}
-	// High-speed mode: cap frame rate, increase step proportionally.
+	// High-speed mode: cap frame rate at ~16fps, advance by multiple seconds per tick.
+	// step = speed / maxFPS ensures proportional advancement (e.g., speed=32 → step=2).
 	interval = time.Second / maxFPS // ~62 ms
-	step = (speed + maxFPS/2) / maxFPS
+	step = speed / maxFPS
 	if step < 1 {
 		step = 1
 	}
@@ -96,14 +97,19 @@ func HandleStream(getService func(string) (*game.Service, error)) gin.HandlerFun
 		conn.WriteJSON(initMsg)
 
 		cmdCh := make(chan Command, 10)
+		doneCh := make(chan struct{})
 		go func() {
+			defer close(cmdCh)
 			for {
 				var cmd Command
 				if err := conn.ReadJSON(&cmd); err != nil {
-					close(cmdCh)
 					return
 				}
-				cmdCh <- cmd
+				select {
+				case cmdCh <- cmd:
+				case <-doneCh:
+					return
+				}
 			}
 		}()
 
@@ -111,6 +117,7 @@ func HandleStream(getService func(string) (*game.Service, error)) gin.HandlerFun
 		// delivers many small-step frames instead of one giant jump per second.
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		defer close(doneCh) // signal reader goroutine to exit
 
 		for {
 			select {
@@ -180,5 +187,7 @@ func (s *streamState) sendFrame(conn *websocket.Conn, svc *game.Service) {
 	s.prevTs = ts
 
 	data, _ := json.Marshal(frame)
-	conn.WriteMessage(websocket.TextMessage, data)
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		s.playing = false // stop playback on write failure (client disconnected)
+	}
 }

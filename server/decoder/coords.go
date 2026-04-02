@@ -3,6 +3,7 @@ package decoder
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -90,9 +91,9 @@ func AutoDetectCoords(db *sql.DB, dbPath string) (CoordResolver, CoordMode, erro
 		return nil, CoordRelative, err
 	}
 
-	// If a .txt metadata file exists, use the known encoding:
+	// If a .txt metadata file exists and has valid data, use the known encoding:
 	// raw = (WGS84 + 180) × 1e6  →  WGS84 = raw × 1e-6 - 180
-	if _, err := LoadMapMeta(dbPath); err == nil {
+	if meta, err := LoadMapMeta(dbPath); err == nil && meta != nil {
 		return &WGS84Resolver{
 			LatScale: 1e-6, LatOffset: -180,
 			LngScale: 1e-6, LngOffset: -180,
@@ -146,6 +147,7 @@ func scanCoordBounds(db *sql.DB, minLat, maxLat, minLng, maxLng *uint32) error {
 	*maxLat = 0
 	*maxLng = 0
 
+	found := false
 	for rows.Next() {
 		var blob []byte
 		if err := rows.Scan(&blob); err != nil {
@@ -156,6 +158,7 @@ func scanCoordBounds(db *sql.DB, minLat, maxLat, minLng, maxLng *uint32) error {
 			if u.RawLat == 0 && u.RawLng == 0 {
 				continue
 			}
+			found = true
 			if u.RawLat < *minLat {
 				*minLat = u.RawLat
 			}
@@ -169,6 +172,9 @@ func scanCoordBounds(db *sql.DB, minLat, maxLat, minLng, maxLng *uint32) error {
 				*maxLng = u.RawLng
 			}
 		}
+	}
+	if !found {
+		return fmt.Errorf("no position data found in database")
 	}
 	return nil
 }

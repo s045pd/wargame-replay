@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type HotspotType = 'firefight' | 'killstreak' | 'mass_casualty' | 'engagement' | 'bombardment';
+export type HotspotType = 'firefight' | 'killstreak' | 'mass_casualty' | 'engagement' | 'bombardment' | 'long_range';
 
 export const ALL_HOTSPOT_TYPES: HotspotType[] = [
   'firefight',
@@ -8,6 +8,7 @@ export const ALL_HOTSPOT_TYPES: HotspotType[] = [
   'mass_casualty',
   'engagement',
   'bombardment',
+  'long_range',
 ];
 
 interface HotspotFilterState {
@@ -29,6 +30,7 @@ export const useHotspotFilter = create<HotspotFilterState>((set) => ({
     mass_casualty: true,
     engagement: true,
     bombardment: true,
+    long_range: true,
   },
 
   toggleDebugOverlay: () => set((s) => ({ debugOverlay: !s.debugOverlay })),

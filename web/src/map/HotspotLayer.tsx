@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type * as mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'maplibre-gl';
 import { HotspotEvent } from '../lib/api';
 
 interface HotspotLayerProps {
@@ -20,6 +20,7 @@ const TYPE_STYLES: Record<string, { core: string; pulse: string; text: string }>
   mass_casualty: { core: 'rgba(200, 0, 0, 0.55)',    pulse: 'rgba(200, 0, 0, 0.22)',   text: '#cc0000' },
   engagement:    { core: 'rgba(255, 120, 0, 0.48)',   pulse: 'rgba(255, 120, 0, 0.18)', text: '#ff8800' },
   bombardment:   { core: 'rgba(255, 255, 80, 0.50)',  pulse: 'rgba(255, 255, 80, 0.22)', text: '#ffee44' },
+  long_range:    { core: 'rgba(0, 200, 255, 0.50)',   pulse: 'rgba(0, 200, 255, 0.20)',  text: '#00ccff' },
 };
 const DEFAULT_STYLE = TYPE_STYLES.firefight;
 
@@ -155,7 +156,15 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
     });
   }, [map]);
 
+  /** Throttle GeoJSON rebuilds to ~20fps — hotspot circles don't need 60fps updates */
+  const lastUpdateRef = useRef(0);
+  const HS_UPDATE_MIN_MS = 50; // ~20fps
+
   const updateSource = useCallback(() => {
+    const now = performance.now();
+    if (now - lastUpdateRef.current < HS_UPDATE_MIN_MS) return;
+    lastUpdateRef.current = now;
+
     const source = map.getSource(HS_SOURCE) as mapboxgl.GeoJSONSource | undefined;
     if (source) {
       source.setData(buildGeoJson(hotspotRef.current, tsRef.current, map.getZoom()));
@@ -184,7 +193,7 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
         // ignore
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map, addSourceAndLayers, updateSource]);
 
   // Update every frame

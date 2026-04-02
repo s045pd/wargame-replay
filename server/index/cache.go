@@ -64,3 +64,12 @@ func (c *LRUCache) removeOldest() {
 	delete(c.cache, entry.key)
 	c.usedBytes -= int64(len(entry.value)) + int64(len(entry.key))
 }
+
+// Clear removes all entries from the cache.
+func (c *LRUCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ll.Init()
+	c.cache = make(map[string]*list.Element)
+	c.usedBytes = 0
+}

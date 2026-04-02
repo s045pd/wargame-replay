@@ -5,7 +5,7 @@ import { useI18n } from '../lib/i18n';
 import { HotspotEvent } from '../lib/api';
 
 /** Hotspot type keys in display order */
-const TYPES = ['firefight', 'killstreak', 'mass_casualty', 'engagement', 'bombardment'] as const;
+const TYPES = ['firefight', 'killstreak', 'mass_casualty', 'engagement', 'bombardment', 'long_range'] as const;
 type HSType = (typeof TYPES)[number];
 
 /** Tab colors matching HotspotControlPanel */
@@ -15,6 +15,7 @@ const TYPE_COLORS: Record<HSType, string> = {
   mass_casualty: '#cc0000',
   engagement: '#ff8800',
   bombardment: '#ffee44',
+  long_range: '#00ccff',
 };
 
 function formatTime(ts: string): string {
@@ -42,6 +43,7 @@ export function HotspotEventTabs() {
       mass_casualty: [],
       engagement: [],
       bombardment: [],
+      long_range: [],
     };
     for (const hs of allHotspots) {
       const key = hs.type as HSType;
@@ -139,7 +141,7 @@ export function HotspotEventTabs() {
                   <span className="font-mono">
                     {formatTime(hs.startTs)}~{formatTime(hs.endTs).slice(3)}
                   </span>
-                  {hs.type !== 'killstreak' && (
+                  {hs.type !== 'killstreak' && hs.type !== 'long_range' && (
                     <>
                       <span>{hs.kills}{t('kills')}</span>
                       <span>{hs.hits}{t('hits')}</span>

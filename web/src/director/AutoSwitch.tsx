@@ -20,6 +20,7 @@ export function AutoSwitch() {
     nextSwitchCountdown,
     lastSwitchTime,
     setNextSwitchCountdown,
+    switchLocked,
   } = useDirector();
   const { t } = useI18n();
 
@@ -81,12 +82,15 @@ export function AutoSwitch() {
       </div>
 
       {autoMode && (
-        <div className="flex justify-between text-xs">
-          <span className="text-zinc-500">{t('next_switch')}</span>
-          <span className="text-zinc-300 font-mono">
-            {nextSwitchCountdown > 0 ? `${nextSwitchCountdown}s` : t('ready')}
-          </span>
-        </div>
+        <>
+          <div className="flex justify-between text-xs">
+            <span className="text-zinc-500">{t('next_switch')}</span>
+            <span className={`font-mono ${switchLocked ? 'text-amber-400' : 'text-zinc-300'}`}>
+              {switchLocked ? `🔒 ${t('locked')}` : nextSwitchCountdown > 0 ? `${nextSwitchCountdown}s` : t('ready')}
+            </span>
+          </div>
+
+        </>
       )}
     </div>
   );

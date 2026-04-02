@@ -1,6 +1,7 @@
 package hotspot
 
 import (
+	"os"
 	"database/sql"
 	"testing"
 
@@ -8,18 +9,23 @@ import (
 	"wargame-replay/server/decoder"
 )
 
+const testDBPath = "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db"
+
 func TestDetectHotspotEvents(t *testing.T) {
-	db, err := sql.Open("sqlite3", "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db?mode=ro")
+	if _, err := os.Stat(testDBPath); err != nil {
+		t.Skip("test db not found:", testDBPath)
+	}
+	db, err := sql.Open("sqlite3", testDBPath+"?mode=ro")
 	if err != nil {
-		t.Skip("test db not found")
+		t.Skip("cannot open test db:", err)
 	}
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		t.Skip("test db not accessible: " + err.Error())
+		t.Skip("test db not accessible:", err)
 	}
 
-	resolver, _, err := decoder.AutoDetectCoords(db, "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db")
+	resolver, _, err := decoder.AutoDetectCoords(db, testDBPath)
 	if err != nil {
 		t.Fatalf("AutoDetectCoords: %v", err)
 	}

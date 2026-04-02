@@ -73,8 +73,9 @@ func ScanDirectory(dir string) ([]GameInfo, error) {
 			continue
 		}
 		if n, exists := seen[info.ID]; exists {
-			info.ID = fmt.Sprintf("%s-%d", info.ID, n+1)
-			seen[info.ID] = n + 1
+			origID := info.ID
+			info.ID = fmt.Sprintf("%s-%d", origID, n+1)
+			seen[origID] = n + 1 // increment counter under original key
 		} else {
 			seen[info.ID] = 0
 		}

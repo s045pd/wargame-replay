@@ -55,12 +55,13 @@ func (idx *TimeIndex) EndTime() string {
 }
 
 func (idx *TimeIndex) Lookup(ts string) (int64, bool) {
+	if len(idx.timestamps) == 0 {
+		return 0, false
+	}
 	i := sort.SearchStrings(idx.timestamps, ts)
+	// Clamp to valid range — Lookup finds the nearest timestamp
 	if i >= len(idx.timestamps) {
 		i = len(idx.timestamps) - 1
-	}
-	if i < 0 {
-		return 0, false
 	}
 	return idx.rowIDs[i], true
 }

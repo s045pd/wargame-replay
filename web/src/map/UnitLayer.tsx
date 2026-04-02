@@ -1,14 +1,19 @@
 import { useEffect, useRef, useCallback } from 'react';
-import mapboxgl from 'mapbox-gl';
-import { UnitPosition, UnitClass, UNIT_CLASS_LABELS } from '../lib/api';
+import * as mapboxgl from 'maplibre-gl';
+import { UnitPosition, UnitClass, UNIT_CLASS_LABELS, GameEvent } from '../lib/api';
 import { registerUnitIcons, iconName } from './unitIcons';
+import { useI18n } from '../lib/i18n';
+import { useDirector } from '../store/director';
 import type { FocusMode } from '../store/director';
+import { usePlayback } from '../store/playback';
 
 /** Focus info passed to the GeoJSON builder (Set for O(1) lookup) */
 interface FocusInfo {
   active: boolean;
   focusUnitId: number;
   relatedIds: Set<number>;
+  /** True = dark map is on → heavily dim background; false = keep current map → lightly dim */
+  darkMap: boolean;
 }
 
 interface UnitLayerProps {
@@ -17,6 +22,7 @@ interface UnitLayerProps {
   selectedUnitId?: number | null;
   speed?: number;
   focusMode?: FocusMode;
+  events?: GameEvent[];
   onSelectUnit?: (id: number | null) => void;
 }
 
@@ -71,6 +77,9 @@ interface UnitVisualState {
   // Revive transition
   reviving: boolean;
   reviveTime: number;
+  // Pending revive: unit was killed + revived between frames (high-speed skip)
+  pendingRevive: boolean;
+  pendingReviveHP: number;
   // Server state
   serverAlive: boolean;
 }
@@ -87,6 +96,7 @@ function buildAnimatedGeoJson(
   posLerpMs: number = POS_LERP_MS,
   focus?: FocusInfo,
 ): GeoJSON.FeatureCollection {
+  const pbFx = usePlayback.getState();
   return {
     type: 'FeatureCollection',
     features: units
@@ -124,7 +134,7 @@ function buildAnimatedGeoJson(
         let glowRadius = 12;
         let glowOpacity = 0.25;
         let glowColor = teamHaloColor(u.team);
-        if (vs && vs.lastHitTime > 0) {
+        if (pbFx.hitFeedbackEnabled && vs && vs.lastHitTime > 0) {
           const hitElapsed = now - vs.lastHitTime;
           if (hitElapsed < HIT_FLASH_MS) {
             const hitT = hitElapsed / HIT_FLASH_MS;
@@ -145,7 +155,7 @@ function buildAnimatedGeoJson(
         if (vs && vs.dying) {
           const deathElapsed = now - vs.deathTime;
 
-          if (deathElapsed < DEATH_FLASH_MS) {
+          if (pbFx.deathEffectEnabled && deathElapsed < DEATH_FLASH_MS) {
             // Phase 1: bright red/white flash — unit is still "visible" as alive
             const flashT = deathElapsed / DEATH_FLASH_MS;
             const flashIntensity = 1 - flashT;
@@ -154,7 +164,7 @@ function buildAnimatedGeoJson(
             glowColor = u.team === 'red' ? '#ff4444' : '#00ccff';
             aliveIconOpacity = 0.95;
             visuallyDead = 0;
-          } else if (deathElapsed < DEATH_TOTAL_MS) {
+          } else if (pbFx.deathEffectEnabled && deathElapsed < DEATH_TOTAL_MS) {
             // Phase 2: fade out — icon shrinks and dims
             const fadeT = (deathElapsed - DEATH_FLASH_MS) / DEATH_FADE_MS;
             const fadeEased = fadeT * fadeT; // ease-in
@@ -163,15 +173,17 @@ function buildAnimatedGeoJson(
             glowOpacity = 0.25 * (1 - fadeEased);
             visuallyDead = 0; // still in alive layer during fade
           } else {
-            // Phase 3: fully dead
+            // Phase 3: fully dead (or FX disabled — skip animation)
             visuallyDead = 1;
             vs.deathDone = true;
           }
         } else if (vs && vs.reviving) {
           // --- Revive transition: green glow pulse + icon grows back ---
           const reviveElapsed = now - vs.reviveTime;
+          // Check if the visual effect should play (revive or heal toggle)
+          const showReviveFx = pbFx.reviveEffectEnabled || pbFx.healEffectEnabled;
 
-          if (reviveElapsed < REVIVE_FLASH_MS) {
+          if (showReviveFx && reviveElapsed < REVIVE_FLASH_MS) {
             // Phase 1: bright green flash
             const flashT = reviveElapsed / REVIVE_FLASH_MS;
             const flashIntensity = Math.sin(flashT * Math.PI); // pulse up then down
@@ -181,7 +193,7 @@ function buildAnimatedGeoJson(
             iconScale = 0.5 + 0.5 * Math.min(reviveElapsed / REVIVE_FLASH_MS, 1);
             aliveIconOpacity = 0.5 + 0.45 * (reviveElapsed / REVIVE_FLASH_MS);
             visuallyDead = 0;
-          } else if (reviveElapsed < REVIVE_TOTAL_MS) {
+          } else if (showReviveFx && reviveElapsed < REVIVE_TOTAL_MS) {
             // Phase 2: settle to normal
             const settleT = (reviveElapsed - REVIVE_FLASH_MS) / REVIVE_GROW_MS;
             iconScale = 1.0;
@@ -193,7 +205,7 @@ function buildAnimatedGeoJson(
             glowColor = '#22ff88';
             visuallyDead = 0;
           } else {
-            // Revive complete
+            // Revive complete (or FX disabled — skip directly)
             vs.reviving = false;
             visuallyDead = 0;
           }
@@ -204,6 +216,10 @@ function buildAnimatedGeoJson(
         // --- Focus mode visual adjustments ---
         let showLabel = 0; // 1 = always show name label (even if not selected)
         let deadIconOpacity = 0.5; // default dead unit opacity
+        let labelText = `${u.name || `#${u.id}`} (${UNIT_CLASS_LABELS[cls]})`;
+        let labelSize = 11;          // default label font size
+        let labelColor = '#ffffff';   // default label color
+        let labelOpacity = 1.0;       // default label opacity
         if (focus?.active) {
           if (u.id === focus.focusUnitId) {
             // ★ Focus unit (the killer): gold glow, full brightness, name visible
@@ -212,16 +228,31 @@ function buildAnimatedGeoJson(
             glowColor = '#ffaa00'; // gold
             iconScale = Math.max(iconScale, 1.15);
             showLabel = 1;
+            labelText = u.name || `#${u.id}`; // name only, no class
+            labelColor = '#ffffff';
+            labelSize = 11;
           } else if (focus.relatedIds.has(u.id)) {
-            // ● Related targets: moderately dimmed, name visible, fade when dead
+            // ● Related targets: smaller + dimmer name to reduce overlap
             aliveIconOpacity *= 0.75;
             deadIconOpacity = 0.3;
             showLabel = 1;
-          } else {
-            // ○ Background units: very dim, no label
+            labelText = u.name || `#${u.id}`; // name only, no class
+            labelSize = 9;
+            labelColor = '#a0a0a0'; // muted gray
+            // When a related unit is dead, dim the label to match the icon
+            if (visuallyDead === 1) {
+              labelOpacity = 0.35;
+            }
+          } else if (focus.darkMap) {
+            // ○ Background units on dark map: very dim, no label
             aliveIconOpacity *= 0.1;
             glowOpacity *= 0.1;
             deadIconOpacity = 0.06;
+          } else {
+            // ○ Background units on normal map: slightly dimmed, no label
+            aliveIconOpacity *= 0.55;
+            glowOpacity *= 0.4;
+            deadIconOpacity = 0.25;
           }
         }
 
@@ -236,6 +267,9 @@ function buildAnimatedGeoJson(
             team: u.team,
             alive: visuallyDead === 0 ? 1 : 0,
             hp: displayHP,
+            ammo: u.ammo ?? 0,
+            supply: u.supply ?? 0,
+            revivalTokens: u.revivalTokens ?? 0,
             name: u.name || `#${u.id}`,
             unitClass: cls,
             classLabel: UNIT_CLASS_LABELS[cls],
@@ -248,6 +282,10 @@ function buildAnimatedGeoJson(
             selected: u.id === selectedUnitId ? 1 : 0,
             showLabel,
             deadIconOpacity,
+            labelText,
+            labelSize,
+            labelColor,
+            labelOpacity,
             iconAlive: iconName(u.team, cls, false, displayHP),
             iconDead: iconName(u.team, cls, true, 0),
           },
@@ -269,7 +307,7 @@ function adaptiveLerpMs(speed: number): number {
   return Math.max(40, Math.min(POS_LERP_MS, tickMs * 0.85));
 }
 
-export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, onSelectUnit }: UnitLayerProps) {
+export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, events, onSelectUnit }: UnitLayerProps) {
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const onSelectUnitRef = useRef(onSelectUnit);
   onSelectUnitRef.current = onSelectUnit;
@@ -280,18 +318,26 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
   const speedRef = useRef(speed);
   speedRef.current = speed;
 
-  // Stable focus info ref — convert relatedUnitIds to Set once for O(1) lookup
-  const focusModeRef = useRef(focusMode);
-  focusModeRef.current = focusMode;
-  const focusInfoRef = useRef<FocusInfo>({ active: false, focusUnitId: -1, relatedIds: new Set() });
-  if (focusMode?.active) {
-    focusInfoRef.current = {
-      active: true,
-      focusUnitId: focusMode.focusUnitId,
-      relatedIds: new Set(focusMode.relatedUnitIds),
-    };
-  } else {
-    focusInfoRef.current = { active: false, focusUnitId: -1, relatedIds: new Set() };
+  // Stable focus info ref — convert relatedUnitIds to Set once for O(1) lookup.
+  // Only rebuild when the focus mode identity actually changes (avoids per-frame Set allocation).
+  const focusInfoRef = useRef<FocusInfo>({ active: false, focusUnitId: -1, relatedIds: new Set(), darkMap: false });
+  const prevFocusModeRef = useRef(focusMode);
+  if (prevFocusModeRef.current !== focusMode) {
+    prevFocusModeRef.current = focusMode;
+    // Read focusDarkMap + current map style to determine if dark map is actually in effect
+    const dirState = useDirector.getState();
+    const pbMapStyle = usePlayback.getState().mapStyle;
+    const isDarkActive = dirState.focusDarkMap && pbMapStyle === 'dark';
+    if (focusMode?.active) {
+      focusInfoRef.current = {
+        active: true,
+        focusUnitId: focusMode.focusUnitId,
+        relatedIds: new Set(focusMode.relatedUnitIds),
+        darkMap: isDarkActive,
+      };
+    } else {
+      focusInfoRef.current = { active: false, focusUnitId: -1, relatedIds: new Set(), darkMap: false };
+    }
   }
 
   // --- Per-unit visual states ---
@@ -300,6 +346,9 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
   const isAnimatingRef = useRef(false);
   /** Tracks whether ANY animation is still in progress */
   const hasActiveAnimation = useRef(false);
+  /** Throttle setData to ~30fps: skip if last push was <30ms ago */
+  const lastSetDataRef = useRef<number>(0);
+  const SET_DATA_MIN_MS = 30;
 
   const addSourceAndLayers = useCallback(() => {
     if (map.getSource(SOURCE_ID)) return;
@@ -388,15 +437,16 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
       source: SOURCE_ID,
       filter: ['any', ['==', ['get', 'selected'], 1], ['==', ['get', 'showLabel'], 1]],
       layout: {
-        'text-field': ['concat', ['get', 'name'], ' (', ['get', 'classLabel'], ')'],
+        'text-field': ['get', 'labelText'],
         'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-        'text-size': 11,
+        'text-size': ['get', 'labelSize'],
         'text-offset': [0, -2],
         'text-anchor': 'bottom',
         'text-allow-overlap': true,
       },
       paint: {
-        'text-color': '#ffffff',
+        'text-color': ['get', 'labelColor'],
+        'text-opacity': ['get', 'labelOpacity'],
         'text-halo-color': '#000000',
         'text-halo-width': 1,
       },
@@ -419,56 +469,70 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
       const feature = e.features?.[0];
       if (!feature) return;
 
+      // Remove existing popup first to prevent overlap during layer transitions
+      popup.remove();
+
       const coords = (feature.geometry as GeoJSON.Point).coordinates as [number, number];
       const team = feature.properties?.team as string;
       const name = feature.properties?.name as string;
       const hp = feature.properties?.hp as number;
-      const alive = feature.properties?.alive as number;
-      const classLabel = feature.properties?.classLabel as string;
+      const alive = Number(feature.properties?.alive);
+      const unitClass = feature.properties?.unitClass as string;
+      const ammo = feature.properties?.ammo as number;
+      const supply = feature.properties?.supply as number;
+      const revivalTokens = feature.properties?.revivalTokens as number;
 
+      const t = useI18n.getState().t;
+      const classLabel = t(unitClass || 'rifle');
       popup
         .setLngLat(coords)
         .setHTML(
           `<div style="font-family: monospace; font-size: 12px; background: #111; color: #eee; padding: 6px 10px; border-radius: 4px; border: 1px solid #333;">
             <div><strong>${name}</strong></div>
-            <div>Team: <span style="color: ${teamColor(team)}">${team}</span></div>
-            <div>Class: ${classLabel}</div>
-            ${alive === 0 ? '<div style="color: #ff4444;">KIA</div>' : `<div>HP: ${hp}/100</div>`}
+            <div><span style="color: ${teamColor(team)}">${team}</span> &middot; ${classLabel}</div>
+            ${alive === 0 ? `<div style="color: #ff4444;">${t('kia')}</div>` : `<div>${t('hp')}: ${hp}/100 &middot; ${t('ammo')}: ${ammo} &middot; ${t('supply')}: ${supply} &middot; ${t('revival_tokens')}: ${revivalTokens}</div>`}
           </div>`
         )
         .addTo(map);
     };
 
-    map.on('mouseenter', ALIVE_LAYER_ID, showPopup);
-    map.on('mouseenter', DEAD_LAYER_ID, showPopup);
-    map.on('mouseleave', ALIVE_LAYER_ID, () => {
+    const hidePopup = () => {
       map.getCanvas().style.cursor = '';
       popup.remove();
-    });
-    map.on('mouseleave', DEAD_LAYER_ID, () => {
-      map.getCanvas().style.cursor = '';
-      popup.remove();
-    });
+    };
 
-    map.on('click', ALIVE_LAYER_ID, (e) => {
+    const onClickUnit = (e: mapboxgl.MapLayerMouseEvent) => {
       const feature = e.features?.[0];
       if (feature) onSelectUnitRef.current?.(feature.properties?.id as number);
-    });
-    map.on('click', DEAD_LAYER_ID, (e) => {
-      const feature = e.features?.[0];
-      if (feature) onSelectUnitRef.current?.(feature.properties?.id as number);
-    });
-    map.on('click', (e) => {
+    };
+
+    const onClickMap = (e: mapboxgl.MapMouseEvent) => {
       const features = map.queryRenderedFeatures(e.point, { layers: [ALIVE_LAYER_ID, DEAD_LAYER_ID] });
       if (features.length === 0) {
         onSelectUnitRef.current?.(null);
       }
-    });
+    };
+
+    map.on('mouseenter', ALIVE_LAYER_ID, showPopup);
+    map.on('mouseenter', DEAD_LAYER_ID, showPopup);
+    map.on('mouseleave', ALIVE_LAYER_ID, hidePopup);
+    map.on('mouseleave', DEAD_LAYER_ID, hidePopup);
+    map.on('click', ALIVE_LAYER_ID, onClickUnit);
+    map.on('click', DEAD_LAYER_ID, onClickUnit);
+    map.on('click', onClickMap);
 
     const onStyleLoad = () => addSourceAndLayers();
     map.on('style.load', onStyleLoad);
 
     return () => {
+      // Remove ALL event handlers to prevent StrictMode double-bindings
+      map.off('mouseenter', ALIVE_LAYER_ID, showPopup);
+      map.off('mouseenter', DEAD_LAYER_ID, showPopup);
+      map.off('mouseleave', ALIVE_LAYER_ID, hidePopup);
+      map.off('mouseleave', DEAD_LAYER_ID, hidePopup);
+      map.off('click', ALIVE_LAYER_ID, onClickUnit);
+      map.off('click', DEAD_LAYER_ID, onClickUnit);
+      map.off('click', onClickMap);
       map.off('style.load', onStyleLoad);
       cancelAnimationFrame(rafRef.current);
       isAnimatingRef.current = false;
@@ -484,7 +548,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
       }
       popup.remove();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map, addSourceAndLayers]);
 
   // --- Main animation: update visual states when new units arrive, run rAF ---
@@ -576,8 +640,36 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
           deathDone: !u.alive,
           reviving: false,
           reviveTime: 0,
+          pendingRevive: false,
+          pendingReviveHP: 0,
           serverAlive: u.alive,
         });
+      }
+    }
+
+    // --- Detect deaths skipped by frame gap (high-speed playback) ---
+    // At high speeds, a unit may die and revive between consecutive frames.
+    // The frame data shows the unit alive, so the normal death detection never fires.
+    // Check kill events: if victim is currently alive with no death animation, trigger
+    // a death→revival sequence so the user sees the kill flash + green revive pulse.
+    if (events) {
+      for (const ev of events) {
+        if (ev.type !== 'kill' || ev.dst === undefined) continue;
+        const vs = states.get(ev.dst);
+        if (!vs) continue;
+        // Only trigger for units that are ALIVE in current frame but have a kill event
+        // (meaning they died and were revived between frames)
+        if (vs.serverAlive && !vs.dying && !vs.deathDone && !vs.pendingRevive) {
+          vs.dying = true;
+          vs.deathTime = now;
+          vs.lastHitTime = now;
+          vs.pendingRevive = true;
+          vs.pendingReviveHP = vs.targetHP; // remember the current HP to restore
+          // Flash HP to 0 briefly
+          vs.prevHP = vs.displayHP;
+          vs.targetHP = 0;
+          vs.hpChangeTime = now;
+        }
       }
     }
 
@@ -590,6 +682,22 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
 
         const now = performance.now();
         const curLerp = adaptiveLerpMs(speedRef.current);
+
+        // --- Transition pending revives: after death flash, start revive animation ---
+        for (const [, vs] of states) {
+          if (vs.dying && vs.pendingRevive && (now - vs.deathTime) >= DEATH_FLASH_MS) {
+            vs.dying = false;
+            vs.deathDone = false;
+            vs.reviving = true;
+            vs.reviveTime = now;
+            vs.pendingRevive = false;
+            // Animate HP from 0 up to stored HP
+            vs.prevHP = 0;
+            vs.displayHP = 0;
+            vs.targetHP = vs.pendingReviveHP;
+            vs.hpChangeTime = now;
+          }
+        }
 
         // Check if any animation is still in progress
         hasActiveAnimation.current = false;
@@ -619,11 +727,18 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
             hasActiveAnimation.current = true;
             break;
           }
+          // Pending revive waiting for death flash to complete?
+          if (vs.pendingRevive) {
+            hasActiveAnimation.current = true;
+            break;
+          }
         }
 
-        // Update GeoJSON with adaptive lerp duration
+        // Update GeoJSON — throttle to ~30fps to halve Mapbox re-index cost
+        // while keeping interpolation calculations at full rAF rate
         const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
-        if (source) {
+        if (source && now - lastSetDataRef.current >= SET_DATA_MIN_MS) {
+          lastSetDataRef.current = now;
           source.setData(
             buildAnimatedGeoJson(
               unitsRef.current, selectedRef.current, states, now, curLerp,
@@ -641,8 +756,8 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, on
 
       rafRef.current = requestAnimationFrame(animate);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, units, selectedUnitId, focusMode?.active, focusMode?.focusUnitId]);
+   
+  }, [map, units, selectedUnitId, focusMode, events]);
 
   return null;
 }

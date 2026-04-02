@@ -1,5 +1,13 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useI18n } from '../../lib/i18n';
+import { MapTab } from './tabs/MapTab';
+import { ColorsTab } from './tabs/ColorsTab';
+import { UnitsTab } from './tabs/UnitsTab';
+import { TrailsTab } from './tabs/TrailsTab';
+import { EffectsTab } from './tabs/EffectsTab';
+import { BallisticsTab } from './tabs/BallisticsTab';
+import { PlaybackTab } from './tabs/PlaybackTab';
+import { GeneralTab } from './tabs/GeneralTab';
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -21,6 +29,19 @@ type TabKey = (typeof TABS)[number]['key'];
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('map');
   const { t } = useI18n();
+
+  const TAB_CONTENT: Record<TabKey, React.ComponentType> = {
+    map: MapTab,
+    colors: ColorsTab,
+    units: UnitsTab,
+    trails: TrailsTab,
+    effects: EffectsTab,
+    ballistics: BallisticsTab,
+    playback: PlaybackTab,
+    general: GeneralTab,
+  };
+
+  const ActiveTab = TAB_CONTENT[activeTab];
 
   return (
     <div
@@ -56,8 +77,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
           {/* Content area */}
           <div className="flex-1 overflow-y-auto p-5">
-            {/* Tab content rendered here — placeholder for now */}
-            <div className="text-xs text-zinc-500">Tab: {activeTab}</div>
+            <ActiveTab />
           </div>
         </div>
       </div>

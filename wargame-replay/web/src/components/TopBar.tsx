@@ -1,21 +1,20 @@
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
-import { MapStyleKey } from '../map/styles';
+import { ALL_STYLE_KEYS, MapStyleKey } from '../map/styles';
 import { PlayerSearch } from '../map/PlayerSearch';
 
 interface TopBarProps {
   onShowShortcuts?: () => void;
+  onShowSettings?: () => void;
 }
 
-export function TopBar({ onShowShortcuts }: TopBarProps) {
-  const { meta, coordMode, mapStyle, setMapStyle, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
+export function TopBar({ onShowShortcuts, onShowSettings }: TopBarProps) {
+  const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
 
   const isGeoMode = coordMode === 'wgs84';
-
-  const MAP_STYLE_KEYS: MapStyleKey[] = ['dark', 'satellite', 'terrain'];
 
   return (
     <div className="h-12 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-4">
@@ -54,6 +53,20 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
       )}
       <div className="flex-1" />
 
+      {/* Settings button */}
+      {onShowSettings && (
+        <button
+          onClick={onShowSettings}
+          className="w-6 h-6 flex items-center justify-center rounded text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors"
+          title={`${t('settings')} (,)`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      )}
+
       {/* Shortcuts help button */}
       {onShowShortcuts && (
         <button
@@ -90,24 +103,30 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
       </div>
       <div className="h-4 w-px bg-zinc-700" />
 
-      {/* Map style switcher — only for wgs84 geo mode */}
+      {/* Map style dropdown + tilt toggle — only for wgs84 geo mode */}
       {isGeoMode && (
         <>
-          <div className="flex items-center gap-1">
-            {MAP_STYLE_KEYS.map(key => (
-              <button
-                key={key}
-                onClick={() => setMapStyle(key)}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  mapStyle === key
-                    ? 'bg-emerald-700 text-white'
-                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
-                }`}
-              >
-                {t(key)}
-              </button>
+          <select
+            value={mapStyle}
+            onChange={(e) => setMapStyle(e.target.value as MapStyleKey)}
+            className="bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs rounded px-2 py-1 cursor-pointer hover:bg-zinc-700 transition-colors focus:outline-none focus:ring-1 focus:ring-emerald-600"
+            title={t('map_source')}
+          >
+            {ALL_STYLE_KEYS.map(key => (
+              <option key={key} value={key}>{t(`style_${key}`)}</option>
             ))}
-          </div>
+          </select>
+          <button
+            onClick={toggleTiltMode}
+            className={`px-2 py-1 text-xs rounded transition-colors ${
+              tiltMode
+                ? 'bg-violet-600 text-white'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+            }`}
+            title={`${t('tilt_mode')} (T)`}
+          >
+            {t('tilt_mode')}
+          </button>
           <div className="h-4 w-px bg-zinc-700" />
         </>
       )}

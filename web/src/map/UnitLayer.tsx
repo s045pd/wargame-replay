@@ -6,6 +6,7 @@ import { useI18n } from '../lib/i18n';
 import { useDirector } from '../store/director';
 import type { FocusMode } from '../store/director';
 import { usePlayback } from '../store/playback';
+import { useVisualConfig } from '../store/visualConfig';
 
 /** Focus info passed to the GeoJSON builder (Set for O(1) lookup) */
 interface FocusInfo {
@@ -550,6 +551,27 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
     };
    
   }, [map, addSourceAndLayers]);
+
+  // --- Regenerate icons when visual config (colors / size) changes ---
+  const unitIconSize = useVisualConfig(s => s.unitIconSize);
+  const redTeamColor = useVisualConfig(s => s.redTeamColor);
+  const blueTeamColor = useVisualConfig(s => s.blueTeamColor);
+  const redDeadColor = useVisualConfig(s => s.redDeadColor);
+  const blueDeadColor = useVisualConfig(s => s.blueDeadColor);
+
+  useEffect(() => {
+    // Re-register icons with updated config; update-or-add pattern in registerUnitIcons
+    // handles both initial registration and subsequent updates.
+    registerUnitIcons(map, {
+      size: unitIconSize,
+      redFill: redTeamColor,
+      blueFill: blueTeamColor,
+      redDeadFill: redDeadColor,
+      blueDeadFill: blueDeadColor,
+    });
+    // Trigger a repaint so the map picks up the updated images
+    map.triggerRepaint();
+  }, [map, unitIconSize, redTeamColor, blueTeamColor, redDeadColor, blueDeadColor]);
 
   // --- Main animation: update visual states when new units arrive, run rAF ---
   useEffect(() => {

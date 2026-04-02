@@ -110,8 +110,9 @@ function computeActivityCircle(
     if (d > maxDist) maxDist = d;
   }
 
-  // Minimum 50m, 20% padding + 20m buffer, capped at 300m
-  const radiusMeters = Math.min(300, Math.max(50, maxDist * 1.2 + 20));
+  // Clamp to user-configurable min/max with 20% padding + 20m buffer
+  const vc = useVisualConfig.getState();
+  const radiusMeters = Math.min(vc.activityCircleMax, Math.max(vc.activityCircleMin, maxDist * 1.2 + 20));
 
   return { centerLat, centerLng, radiusMeters };
 }

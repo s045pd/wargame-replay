@@ -11,6 +11,7 @@ import { POILayer } from './POILayer';
 import { HotspotLayer } from './HotspotLayer';
 import { HotspotActivityCircle } from './HotspotActivityCircle';
 import { SniperTracerLayer } from './SniperTracerLayer';
+import { BuildingLayer } from './BuildingLayer';
 import { EventToastOverlay } from './EventToastOverlay';
 import { KillLeaderboard } from './KillLeaderboard';
 import { HotspotControlPanel } from './HotspotControlPanel';
@@ -99,49 +100,121 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       map.resize();
 
       // Enable globe projection for cinematic intro (MapLibre v4+)
-      if (useVisualConfig.getState().globeProjection) {
+      const vc = useVisualConfig.getState();
+      const useGlobe = vc.globeProjection;
+      if (useGlobe) {
         map.setProjection({ type: 'globe' });
       }
 
-      setMapReady(true);
+      // Defer setMapReady(true) until AFTER the intro animation finishes.
+      // If we set it too early, React effects (e.g. tilt-mode easeTo) fire
+      // immediately and cancel the fitBounds animation.
+      // A helper ensures it's only called once even with fallback timeouts.
+      let mapReadyFired = false;
+      const fireMapReady = () => {
+        if (mapReadyFired) return;
+        mapReadyFired = true;
+        setMapReady(true);
+      };
 
       // Use meta bounds for cinematic globe → battlefield fly-in
       const { meta } = usePlayback.getState();
       const bounds = meta?.bounds;
       if (bounds) {
-        const vc = useVisualConfig.getState();
         const pad = Math.max(vc.boundsPadding / 100, 0.001);
         const padLat = Math.max((bounds.maxLat - bounds.minLat) * pad, 0.0003);
         const padLng = Math.max((bounds.maxLng - bounds.minLng) * pad, 0.0003);
+        const targetBounds: [[number, number], [number, number]] = [
+          [bounds.minLng - padLng, bounds.minLat - padLat],
+          [bounds.maxLng + padLng, bounds.maxLat + padLat],
+        ];
 
-        if (vc.introAnimation) {
-          map.fitBounds(
-            [[bounds.minLng - padLng, bounds.minLat - padLat],
-             [bounds.maxLng + padLng, bounds.maxLat + padLat]],
-            {
-              animate: true,
-              duration: vc.introDuration * 1000,
-              maxZoom: vc.maxZoom,
-              pitch: vc.introPitch,
-              bearing: vc.introBearing,
-              essential: true,
-            },
-          );
+        if (vc.introAnimation && useGlobe) {
+          // ── Globe intro: two-phase rAF animation ──
+          // Phase 1 (first 15%): rotate the globe so the target is centered
+          //   — pan the center from initial [30,20] to battlefield, zoom stays low
+          // Phase 2 (remaining 85%): pure vertical zoom straight down
+          //   — center locked on battlefield, only zoom increases
+          // This avoids the diagonal slide that a single-phase interpolation creates.
+
+          const cam = map.cameraForBounds(targetBounds, { maxZoom: vc.maxZoom });
+          if (cam && cam.center && cam.zoom != null) {
+            const c = Array.isArray(cam.center)
+              ? { lng: cam.center[0], lat: cam.center[1] }
+              : cam.center as { lng: number; lat: number };
+
+            const startZoom = map.getZoom();        // ~1.5  (globe overview)
+            const startCenter = map.getCenter();    // [30, 20]
+            const endZoom = cam.zoom;
+            const duration = vc.introDuration * 1000;
+            const PAN_END = 0.15; // first 15% of duration: rotate globe to target
+            const t0 = performance.now();
+
+            const animateGlobe = () => {
+              const elapsed = performance.now() - t0;
+              const raw = Math.min(elapsed / duration, 1);
+
+              // ── Center (panning) ──
+              // Finishes quickly so the globe faces the target before zoom kicks in.
+              // Uses ease-out so it decelerates smoothly into locked position.
+              const panRaw = Math.min(raw / PAN_END, 1);
+              const panEased = 1 - Math.pow(1 - panRaw, 3); // ease-out cubic
+              const lng = startCenter.lng + (c.lng - startCenter.lng) * panEased;
+              const lat = startCenter.lat + (c.lat - startCenter.lat) * panEased;
+
+              // ── Zoom ──
+              // Runs across the full duration with ease-in-out cubic.
+              // Since pan finishes at 15%, the remaining 85% is a pure vertical dive.
+              const zoomEased = raw < 0.5
+                ? 4 * raw * raw * raw
+                : 1 - Math.pow(-2 * raw + 2, 3) / 2;
+              const zoom = startZoom + (endZoom - startZoom) * zoomEased;
+
+              map.jumpTo({ center: [lng, lat], zoom, pitch: 0, bearing: 0 });
+
+              if (raw < 1) {
+                requestAnimationFrame(animateGlobe);
+              } else {
+                // Animation done — switch to mercator for normal interaction
+                try { map.setProjection({ type: 'mercator' }); } catch { /* ignore */ }
+                fireMapReady();
+              }
+            };
+            requestAnimationFrame(animateGlobe);
+            // Fallback: guarantee mapReady even if rAF stalls
+            setTimeout(fireMapReady, duration + 500);
+          } else {
+            // cameraForBounds failed — show map immediately
+            fireMapReady();
+          }
+        } else if (vc.introAnimation) {
+          // Globe disabled but intro animation on — simple fly-in
+          map.fitBounds(targetBounds, {
+            animate: true,
+            duration: vc.introDuration * 1000,
+            maxZoom: vc.maxZoom,
+            pitch: vc.introPitch,
+            bearing: vc.introBearing,
+            essential: true,
+          });
           map.once('moveend', () => {
             map.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
+            map.once('moveend', fireMapReady);
           });
+          // Fallback: fitBounds duration + pitch-reset + buffer
+          setTimeout(fireMapReady, vc.introDuration * 1000 + 1500);
         } else {
           // No animation — jump directly
-          map.fitBounds(
-            [[bounds.minLng - padLng, bounds.minLat - padLat],
-             [bounds.maxLng + padLng, bounds.maxLat + padLat]],
-            {
-              animate: false,
-              maxZoom: vc.maxZoom,
-            },
-          );
+          map.fitBounds(targetBounds, {
+            animate: false,
+            maxZoom: vc.maxZoom,
+          });
+          fireMapReady();
         }
         fittedRef.current = true;
+      } else {
+        // No bounds data — show map immediately
+        fireMapReady();
       }
     }
 
@@ -292,9 +365,10 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
             // Manual follow (user clicked) — zoom in close
             const t = followTargetRef.current;
             if (t) {
+              const followZoomCfg = useVisualConfig.getState().defaultFollowZoom;
               mapRef.current.flyTo({
                 center: [t.lng, t.lat],
-                zoom: 19,
+                zoom: followZoomCfg,
                 duration: 1200,
               });
             }
@@ -334,8 +408,9 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
             }
           } else {
             const curZoom = map.getZoom();
-            if (curZoom < 18) {
-              map.setZoom(curZoom + (18 - curZoom) * ZOOM_LERP);
+            const followFloor = useVisualConfig.getState().defaultFollowZoom - 1;
+            if (curZoom < followFloor) {
+              map.setZoom(curZoom + (followFloor - curZoom) * ZOOM_LERP);
             }
           }
 
@@ -427,6 +502,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
               <HotspotControlPanel />
             </>
           )}
+          <BuildingLayer map={mapRef.current} />
           <TrailLayer
             map={mapRef.current}
             units={units}
@@ -501,7 +577,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
           )}
 
           {/* Kill leaderboard — below scoreboard (hidden in immersive) */}
-          {!immersive && <KillLeaderboard events={events} units={units} currentTs={currentTs} />}
+          {!immersive && <KillLeaderboard units={units} currentTs={currentTs} />}
 
           {/* Selected unit info panel */}
           {selectedUnit && (
@@ -515,7 +591,6 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
                 />
                 <span className="font-bold">{selectedUnit.name || `#${selectedUnit.id}`}</span>
                 <span className="text-zinc-500">({selectedUnit.team})</span>
-                <span className="text-zinc-400 text-[10px]">{t((selectedUnit.class || 'rifle') as string)}</span>
                 <button
                   className="ml-auto text-zinc-500 hover:text-zinc-200 text-xs"
                   onClick={() => {

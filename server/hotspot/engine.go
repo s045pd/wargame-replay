@@ -472,8 +472,8 @@ func detectLongRangeKills(
 
 		candidates = append(candidates, HotspotEvent{
 			Type:        "long_range",
-			StartTs:     addSecondsToTs(kill.Ts, -5),
-			EndTs:       addSecondsToTs(kill.Ts, 25),
+			StartTs:     addSecondsToTs(kill.Ts, -3),
+			EndTs:       addSecondsToTs(kill.Ts, 5),
 			PeakTs:      kill.Ts,
 			CenterLat:   centerLat,
 			CenterLng:   centerLng,

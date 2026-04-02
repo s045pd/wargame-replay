@@ -59,6 +59,17 @@ func (h *Handler) GetHotspots(c *gin.Context) {
 	c.JSON(http.StatusOK, svc.HotspotEvents())
 }
 
+// GetKills returns all kill events for the entire game, pre-sorted by timestamp.
+// The frontend uses this for an accurate kill leaderboard that survives seek/fast-forward.
+func (h *Handler) GetKills(c *gin.Context) {
+	svc, err := h.GetService(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, svc.KillEvents())
+}
+
 func (h *Handler) GetService(gameID string) (*game.Service, error) {
 	// Fast path: read lock
 	h.mu.RLock()

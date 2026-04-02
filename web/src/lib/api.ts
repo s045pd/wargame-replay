@@ -191,6 +191,19 @@ export async function fetchHotspots(gameId: string): Promise<HotspotEvent[]> {
   return res.json();
 }
 
+/** Fetch ALL kill events for the entire game, sorted by timestamp. */
+export async function fetchKills(gameId: string): Promise<GameEvent[]> {
+  try {
+    const res = await fetch(`${BASE}/api/games/${gameId}/kills`);
+    if (!res.ok) return [];
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchFrame(gameId: string, ts: string): Promise<Frame> {
   const res = await fetch(`${BASE}/api/games/${gameId}/frame/${encodeURIComponent(ts)}`);
   return res.json();

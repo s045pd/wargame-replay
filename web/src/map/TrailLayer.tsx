@@ -37,8 +37,7 @@ const HIT_COLOR = '#ffcc00';
 const FOLLOW_COLOR = '#00ff66';
 const FOLLOW_GLOW_COLOR = 'rgba(0, 255, 100, 0.55)';
 
-// ---------- animation config ----------
-const TRACER_LENGTH = 0.2;
+// ---------- animation config (defaults — overridden by visualConfig) ----------
 
 /** Convert hex color to rgba string */
 function hexToRgba(hex: string, alpha: number): string {
@@ -56,6 +55,8 @@ interface TracerEntry {
   isKill: boolean;
   isFollowed: boolean;
   startTime: number;
+  /** Per-tracer animation duration (kill vs hit can differ) */
+  durationMs: number;
   /** Opacity multiplier for focus mode: 1.0 = normal, <1 = dimmed */
   focusDim: number;
 }
@@ -75,6 +76,7 @@ function buildTracerCoords(
   entry: TracerEntry,
   now: number,
   durationMs: number,
+  tracerLength: number,
 ): { coords: [number, number][]; opacity: number } | null {
   const elapsed = now - entry.startTime;
   if (elapsed < 0 || elapsed > durationMs) return null;
@@ -82,8 +84,8 @@ function buildTracerCoords(
   const { srcLng, srcLat, dstLng, dstLat } = entry;
   const t = elapsed / durationMs;
 
-  const headT = Math.min(t * (1 + TRACER_LENGTH), 1 + TRACER_LENGTH);
-  const tailT = Math.max(0, headT - TRACER_LENGTH);
+  const headT = Math.min(t * (1 + tracerLength), 1 + tracerLength);
+  const tailT = Math.max(0, headT - tracerLength);
 
   const clampedHead = Math.min(headT, 1);
   const clampedTail = Math.min(tailT, 1);
@@ -99,12 +101,12 @@ function buildTracerCoords(
 function buildAnimatedGeoJson(
   tracers: TracerEntry[],
   now: number,
-  durationMs: number,
+  tracerLength: number,
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
 
   for (const tr of tracers) {
-    const result = buildTracerCoords(tr, now, durationMs);
+    const result = buildTracerCoords(tr, now, tr.durationMs, tracerLength);
     if (!result) continue;
 
     features.push({
@@ -290,6 +292,10 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
     const focusUnitId = focusMode?.focusUnitId ?? -1;
 
     const { killLineEnabled, hitLineEnabled } = usePlayback.getState();
+    const vcDur = useVisualConfig.getState();
+    const killDurMs = vcDur.killLineDuration * 1000;
+    const hitDurMs = vcDur.hitLineDuration * 1000;
+
     for (const ev of events) {
       if (ev.type !== 'hit' && ev.type !== 'kill') continue;
       // Respect per-type toggles
@@ -322,6 +328,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         isKill: ev.type === 'kill',
         isFollowed,
         startTime: now + addedCount * 60,
+        durationMs: ev.type === 'kill' ? killDurMs : hitDurMs,
         focusDim,
       });
       addedCount++;
@@ -334,15 +341,15 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         if (!isAnimatingRef.current) return;
 
         const now = performance.now();
-        // Read duration from visualConfig (kill/hit use killLineDuration as base)
+        // Read tracer visual length from visualConfig
         const vc = useVisualConfig.getState();
-        const tracerDurationMs = vc.killLineDuration * 1000;
+        const tracerLen = vc.tracerTrailLength / 400; // 80 → 0.2 (original default)
 
-        // Prune expired tracers in-place (avoids allocating new array every frame)
+        // Prune expired tracers in-place (each tracer has its own duration)
         const tracers = tracersRef.current;
         let writeIdx = 0;
         for (let i = 0; i < tracers.length; i++) {
-          if ((now - tracers[i].startTime) < tracerDurationMs) {
+          if ((now - tracers[i].startTime) < tracers[i].durationMs) {
             tracers[writeIdx++] = tracers[i];
           }
         }
@@ -351,7 +358,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         const source = map.getSource(ATTACK_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
         if (source) {
           if (tracersRef.current.length > 0) {
-            source.setData(buildAnimatedGeoJson(tracersRef.current, now, tracerDurationMs));
+            source.setData(buildAnimatedGeoJson(tracersRef.current, now, tracerLen));
             rafRef.current = requestAnimationFrame(animate);
           } else {
             source.setData({ type: 'FeatureCollection', features: [] });
@@ -375,6 +382,44 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
       }
     }
   }, [map, trailEnabled]);
+
+  // ---------- reactive paint updates for kill/hit line colors, widths & style ----------
+  const killLineColor = useVisualConfig(s => s.killLineColor);
+  const hitLineColor = useVisualConfig(s => s.hitLineColor);
+  const killLineWidth = useVisualConfig(s => s.killLineWidth);
+  const hitLineWidth = useVisualConfig(s => s.hitLineWidth);
+  const killLineStyle = useVisualConfig(s => s.killLineStyle);
+
+  useEffect(() => {
+    if (!layersAddedRef.current) return;
+    try {
+      const killGlowColor = hexToRgba(killLineColor || '#ff3333', 0.5);
+      const hitGlowColor = hexToRgba(hitLineColor || '#ffcc00', 0.4);
+
+      map.setPaintProperty(KILL_GLOW_LAYER, 'line-color', killGlowColor);
+      map.setPaintProperty(KILL_CORE_LAYER, 'line-color', killLineColor || '#ff3333');
+      map.setPaintProperty(KILL_GLOW_LAYER, 'line-width', (killLineWidth || 4) * 4.5);
+      map.setPaintProperty(KILL_CORE_LAYER, 'line-width', killLineWidth || 4);
+
+      map.setPaintProperty(HIT_GLOW_LAYER, 'line-color', hitGlowColor);
+      map.setPaintProperty(HIT_CORE_LAYER, 'line-color', hitLineColor || '#ffcc00');
+      map.setPaintProperty(HIT_GLOW_LAYER, 'line-width', (hitLineWidth || 2.5) * 4);
+      map.setPaintProperty(HIT_CORE_LAYER, 'line-width', hitLineWidth || 2.5);
+
+      // Kill line style: solid / dashed / pulse
+      if (killLineStyle === 'dashed') {
+        map.setLayoutProperty(KILL_CORE_LAYER, 'line-dasharray', [2, 2]);
+        map.setPaintProperty(KILL_GLOW_LAYER, 'line-blur', 8);
+      } else if (killLineStyle === 'pulse') {
+        map.setLayoutProperty(KILL_CORE_LAYER, 'line-dasharray', undefined as unknown as number[]);
+        map.setPaintProperty(KILL_GLOW_LAYER, 'line-blur', 14); // wider glow for pulse look
+      } else {
+        // solid (default)
+        map.setLayoutProperty(KILL_CORE_LAYER, 'line-dasharray', undefined as unknown as number[]);
+        map.setPaintProperty(KILL_GLOW_LAYER, 'line-blur', 8);
+      }
+    } catch { /* layers may not exist yet */ }
+  }, [map, killLineColor, hitLineColor, killLineWidth, hitLineWidth, killLineStyle]);
 
   return null;
 }

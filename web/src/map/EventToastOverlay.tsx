@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameEvent, UnitPosition } from '../lib/api';
 import { useI18n } from '../lib/i18n';
+import { useDirector } from '../store/director';
 
 interface ToastEntry {
   id: number;
@@ -46,6 +47,7 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
   const [showHits, setShowHits] = useState(false);
   const prevEventsRef = useRef<GameEvent[]>([]);
   const { t } = useI18n();
+  const focusMode = useDirector(s => s.focusMode);
 
   // Build team lookup from units
   const teamMap = useRef(new Map<number, string>());
@@ -142,6 +144,16 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
           const srcName = ev.srcName || `#${ev.src}`;
           const dstName = ev.dstName || (ev.dst !== undefined ? `#${ev.dst}` : '?');
 
+          // Focus mode: dim toasts not related to the focused unit
+          const focusActive = focusMode.active;
+          const isRelated = focusActive && (
+            ev.src === focusMode.focusUnitId ||
+            ev.dst === focusMode.focusUnitId ||
+            focusMode.relatedUnitIds.includes(ev.src) ||
+            (ev.dst !== undefined && focusMode.relatedUnitIds.includes(ev.dst))
+          );
+          const dimmed = focusActive && !isRelated;
+
           // Kill event — team-colored
           if (ev.type === 'kill') {
             const isRedKill = toast.srcTeam === 'red';
@@ -154,7 +166,7 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
             return (
               <div
                 key={toast.id}
-                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 ${borderColor} ${bgColor} ${toast.fading ? 'opacity-0' : 'opacity-100'}`}
+                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 ${borderColor} ${bgColor} ${toast.fading ? 'opacity-0' : dimmed ? 'opacity-20' : 'opacity-100'}`}
               >
                 <div className="flex items-center gap-1.5">
                   <span className={shapeColor}>{classShape(ev.srcClass)}</span>
@@ -172,7 +184,7 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
             return (
               <div
                 key={toast.id}
-                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-amber-700/40 bg-amber-950/50 ${toast.fading ? 'opacity-0' : 'opacity-100'}`}
+                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-amber-700/40 bg-amber-950/50 ${toast.fading ? 'opacity-0' : dimmed ? 'opacity-20' : 'opacity-100'}`}
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-amber-500">{classShape(ev.srcClass)}</span>
@@ -193,7 +205,7 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
             return (
               <div
                 key={toast.id}
-                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-emerald-600/60 bg-emerald-950/70 ${toast.fading ? 'opacity-0' : 'opacity-100'}`}
+                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-emerald-600/60 bg-emerald-950/70 ${toast.fading ? 'opacity-0' : dimmed ? 'opacity-20' : 'opacity-100'}`}
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-emerald-500">{classShape(ev.dstClass)}</span>
@@ -210,7 +222,7 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
             return (
               <div
                 key={toast.id}
-                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-green-600/40 bg-green-950/50 ${toast.fading ? 'opacity-0' : 'opacity-100'}`}
+                className={`border rounded px-2.5 py-1 text-xs font-mono backdrop-blur-sm transition-opacity duration-500 border-green-600/40 bg-green-950/50 ${toast.fading ? 'opacity-0' : dimmed ? 'opacity-20' : 'opacity-100'}`}
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-green-500">{classShape(ev.dstClass)}</span>

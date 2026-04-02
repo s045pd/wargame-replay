@@ -275,6 +275,20 @@ func (s *Service) ClearFrameCache() {
 	s.cache.Clear()
 }
 
+// KillEvents returns all kill-type events, sorted by timestamp.
+// Used by the kill leaderboard so clients don't rely on incremental accumulation.
+func (s *Service) KillEvents() []decoder.GameEvent {
+	var kills []decoder.GameEvent
+	for _, ts := range s.hitTimestamps {
+		for _, ev := range s.hitEventsByTs[ts] {
+			if ev.Type == "kill" {
+				kills = append(kills, ev)
+			}
+		}
+	}
+	return kills
+}
+
 // ActiveHotspots returns all hotspot events whose time range includes ts.
 func (s *Service) ActiveHotspots(ts string) []hotspot.HotspotEvent {
 	var active []hotspot.HotspotEvent

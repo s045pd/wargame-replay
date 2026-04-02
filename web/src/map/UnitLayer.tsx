@@ -37,13 +37,31 @@ const LABEL_LAYER_ID = 'units-label-layer';
 // --- Animation timing ---
 const POS_LERP_MS = 900;   // position interpolation
 const HP_LERP_MS = 600;    // HP decrease animation
-const HIT_FLASH_MS = 400;  // bright glow flash on hit
-const DEATH_FLASH_MS = 300; // initial bright flash on death
-const DEATH_FADE_MS = 800;  // fade from alive to dead after flash
-const DEATH_TOTAL_MS = DEATH_FLASH_MS + DEATH_FADE_MS;
-const REVIVE_FLASH_MS = 500; // green glow pulse on revive
-const REVIVE_GROW_MS = 600;  // icon grows back to full size
-const REVIVE_TOTAL_MS = REVIVE_FLASH_MS + REVIVE_GROW_MS;
+
+/** Read effect timings from visual config (called per animation frame). */
+function fxTimings() {
+  const vc = useVisualConfig.getState();
+  const hitFlashMs = vc.hitFlashDuration * 1000;
+  const hitIntensity = vc.hitFlashIntensity;
+  const deathTotalMs = vc.deathDuration * 1000;
+  const deathFlashMs = deathTotalMs * 0.27;          // ~27% flash phase
+  const deathFadeMs = deathTotalMs - deathFlashMs;    // ~73% fade phase
+  const deathScale = vc.deathScale;
+  const reviveTotalMs = vc.reviveDuration * 1000;
+  const reviveFlashMs = reviveTotalMs * 0.45;         // ~45% flash phase
+  const reviveIntensity = vc.reviveIntensity;
+  const healTotalMs = vc.healDuration * 1000;
+  const healGlowSize = vc.healGlowSize;
+  const hitRingSize = vc.hitRingSize;
+  const deathRingSize = vc.deathRingSize;
+  const reviveRingSize = vc.reviveRingSize;
+  return {
+    hitFlashMs, hitIntensity, hitRingSize,
+    deathFlashMs, deathFadeMs, deathTotalMs, deathScale, deathRingSize,
+    reviveFlashMs, reviveTotalMs, reviveIntensity, reviveRingSize,
+    healTotalMs, healGlowSize,
+  };
+}
 
 function teamColor(team: string): string {
   if (team === 'red') return '#ff4444';
@@ -75,9 +93,10 @@ interface UnitVisualState {
   dying: boolean;
   deathTime: number;
   deathDone: boolean; // fully transitioned to dead
-  // Revive transition
+  // Revive / heal transition
   reviving: boolean;
   reviveTime: number;
+  isHeal: boolean;
   // Pending revive: unit was killed + revived between frames (high-speed skip)
   pendingRevive: boolean;
   pendingReviveHP: number;
@@ -98,6 +117,8 @@ function buildAnimatedGeoJson(
   focus?: FocusInfo,
 ): GeoJSON.FeatureCollection {
   const pbFx = usePlayback.getState();
+  const vcState = useVisualConfig.getState();
+  const fx = fxTimings();
   return {
     type: 'FeatureCollection',
     features: units
@@ -137,13 +158,11 @@ function buildAnimatedGeoJson(
         let glowColor = teamHaloColor(u.team);
         if (pbFx.hitFeedbackEnabled && vs && vs.lastHitTime > 0) {
           const hitElapsed = now - vs.lastHitTime;
-          if (hitElapsed < HIT_FLASH_MS) {
-            const hitT = hitElapsed / HIT_FLASH_MS;
-            // Quick bright pulse that fades
-            const flashIntensity = 1 - hitT;
-            glowRadius = 12 + 10 * flashIntensity;
+          if (hitElapsed < fx.hitFlashMs) {
+            const hitT = hitElapsed / fx.hitFlashMs;
+            const flashIntensity = (1 - hitT) * fx.hitIntensity;
+            glowRadius = 12 + fx.hitRingSize * flashIntensity;
             glowOpacity = 0.25 + 0.55 * flashIntensity;
-            // Flash white-ish on hit
             glowColor = '#ffffff';
           }
         }
@@ -156,18 +175,19 @@ function buildAnimatedGeoJson(
         if (vs && vs.dying) {
           const deathElapsed = now - vs.deathTime;
 
-          if (pbFx.deathEffectEnabled && deathElapsed < DEATH_FLASH_MS) {
-            // Phase 1: bright red/white flash — unit is still "visible" as alive
-            const flashT = deathElapsed / DEATH_FLASH_MS;
+          if (pbFx.deathEffectEnabled && deathElapsed < fx.deathFlashMs) {
+            // Phase 1: bright flash — icon scales up briefly
+            const flashT = deathElapsed / fx.deathFlashMs;
             const flashIntensity = 1 - flashT;
-            glowRadius = 12 + 14 * flashIntensity;
+            glowRadius = 12 + fx.deathRingSize * flashIntensity;
             glowOpacity = 0.3 + 0.7 * flashIntensity;
             glowColor = u.team === 'red' ? '#ff4444' : '#00ccff';
+            iconScale = 1.0 + (fx.deathScale - 1.0) * flashIntensity;
             aliveIconOpacity = 0.95;
             visuallyDead = 0;
-          } else if (pbFx.deathEffectEnabled && deathElapsed < DEATH_TOTAL_MS) {
+          } else if (pbFx.deathEffectEnabled && deathElapsed < fx.deathTotalMs) {
             // Phase 2: fade out — icon shrinks and dims
-            const fadeT = (deathElapsed - DEATH_FLASH_MS) / DEATH_FADE_MS;
+            const fadeT = (deathElapsed - fx.deathFlashMs) / fx.deathFadeMs;
             const fadeEased = fadeT * fadeT; // ease-in
             aliveIconOpacity = 0.95 * (1 - fadeEased);
             iconScale = 1.0 - 0.3 * fadeEased;
@@ -179,29 +199,33 @@ function buildAnimatedGeoJson(
             vs.deathDone = true;
           }
         } else if (vs && vs.reviving) {
-          // --- Revive transition: green glow pulse + icon grows back ---
+          // --- Revive / heal transition: green glow pulse + icon grows back ---
           const reviveElapsed = now - vs.reviveTime;
-          // Check if the visual effect should play (revive or heal toggle)
           const showReviveFx = pbFx.reviveEffectEnabled || pbFx.healEffectEnabled;
+          // Select timings based on whether this is a heal or a revive
+          const totalMs = vs.isHeal ? fx.healTotalMs : fx.reviveTotalMs;
+          const flashMs = totalMs * 0.45;
+          const growMs = totalMs - flashMs;
+          const intensity = vs.isHeal ? 1.0 : fx.reviveIntensity;
+          const glowMult = vs.isHeal ? fx.healGlowSize : 1.0;
 
-          if (showReviveFx && reviveElapsed < REVIVE_FLASH_MS) {
+          if (showReviveFx && reviveElapsed < flashMs) {
             // Phase 1: bright green flash
-            const flashT = reviveElapsed / REVIVE_FLASH_MS;
-            const flashIntensity = Math.sin(flashT * Math.PI); // pulse up then down
-            glowRadius = 12 + 16 * flashIntensity;
-            glowOpacity = 0.3 + 0.7 * flashIntensity;
-            glowColor = '#22ff88'; // bright green
-            iconScale = 0.5 + 0.5 * Math.min(reviveElapsed / REVIVE_FLASH_MS, 1);
-            aliveIconOpacity = 0.5 + 0.45 * (reviveElapsed / REVIVE_FLASH_MS);
+            const flashT = reviveElapsed / flashMs;
+            const flashPulse = Math.sin(flashT * Math.PI) * intensity;
+            glowRadius = 12 + fx.reviveRingSize * flashPulse * glowMult;
+            glowOpacity = 0.3 + 0.7 * flashPulse;
+            glowColor = '#22ff88';
+            iconScale = vs.isHeal ? 1.0 : 0.5 + 0.5 * Math.min(reviveElapsed / flashMs, 1);
+            aliveIconOpacity = vs.isHeal ? 0.95 : 0.5 + 0.45 * (reviveElapsed / flashMs);
             visuallyDead = 0;
-          } else if (showReviveFx && reviveElapsed < REVIVE_TOTAL_MS) {
+          } else if (showReviveFx && reviveElapsed < totalMs) {
             // Phase 2: settle to normal
-            const settleT = (reviveElapsed - REVIVE_FLASH_MS) / REVIVE_GROW_MS;
+            const settleT = (reviveElapsed - flashMs) / growMs;
             iconScale = 1.0;
             aliveIconOpacity = 0.95;
-            // Gentle lingering green glow
-            const glowFade = 1 - settleT;
-            glowRadius = 12 + 4 * glowFade;
+            const glowFade = (1 - settleT) * intensity;
+            glowRadius = 12 + (fx.reviveRingSize * 0.25) * glowFade * glowMult;
             glowOpacity = 0.25 + 0.15 * glowFade;
             glowColor = '#22ff88';
             visuallyDead = 0;
@@ -215,10 +239,14 @@ function buildAnimatedGeoJson(
         }
 
         // --- Focus mode visual adjustments ---
-        let showLabel = 0; // 1 = always show name label (even if not selected)
-        let deadIconOpacity = 0.5; // default dead unit opacity
+        let showLabel = vcState.showUnitLabel ? 1 : 0;
+        let deadIconOpacity = vcState.deadOpacity; // default dead unit opacity from config
+        // Apply dead unit display mode
+        if (vcState.deadUnitDisplay === 'hide') {
+          deadIconOpacity = 0;
+        }
         let labelText = `${u.name || `#${u.id}`} (${UNIT_CLASS_LABELS[cls]})`;
-        let labelSize = 11;          // default label font size
+        let labelSize = vcState.labelFontSize;
         let labelColor = '#ffffff';   // default label color
         let labelOpacity = 1.0;       // default label opacity
         if (focus?.active) {
@@ -577,6 +605,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
   useEffect(() => {
     const states = visualStatesRef.current;
     const now = performance.now();
+    const fxInit = fxTimings();
 
     for (const u of units) {
       if (u.lng === undefined || u.lat === undefined) continue;
@@ -628,6 +657,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
           existing.deathDone = false;
           existing.reviving = true;
           existing.reviveTime = now;
+          existing.isHeal = false; // true revive, not heal
           // Animate HP from 0 up to new HP
           existing.prevHP = 0;
           existing.displayHP = 0;
@@ -640,9 +670,10 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
           existing.prevHP = existing.displayHP;
           existing.targetHP = u.hp;
           existing.hpChangeTime = now;
-          // Green heal flash (reuse revive glow but shorter)
+          // Green heal flash (uses separate heal duration/glow settings)
           existing.reviving = true;
           existing.reviveTime = now;
+          existing.isHeal = true;
         }
       } else {
         // First time seeing this unit
@@ -658,10 +689,11 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
           hpChangeTime: 0,
           lastHitTime: 0,
           dying: !u.alive,
-          deathTime: u.alive ? 0 : now - DEATH_TOTAL_MS - 1,
+          deathTime: u.alive ? 0 : now - fxInit.deathTotalMs - 1,
           deathDone: !u.alive,
           reviving: false,
           reviveTime: 0,
+          isHeal: false,
           pendingRevive: false,
           pendingReviveHP: 0,
           serverAlive: u.alive,
@@ -706,12 +738,14 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
         const curLerp = adaptiveLerpMs(speedRef.current);
 
         // --- Transition pending revives: after death flash, start revive animation ---
+        const fx = fxTimings();
         for (const [, vs] of states) {
-          if (vs.dying && vs.pendingRevive && (now - vs.deathTime) >= DEATH_FLASH_MS) {
+          if (vs.dying && vs.pendingRevive && (now - vs.deathTime) >= fx.deathFlashMs) {
             vs.dying = false;
             vs.deathDone = false;
             vs.reviving = true;
             vs.reviveTime = now;
+            vs.isHeal = false;
             vs.pendingRevive = false;
             // Animate HP from 0 up to stored HP
             vs.prevHP = 0;
@@ -735,17 +769,17 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
             break;
           }
           // Hit flash still active?
-          if (vs.lastHitTime > 0 && now - vs.lastHitTime < HIT_FLASH_MS) {
+          if (vs.lastHitTime > 0 && now - vs.lastHitTime < fx.hitFlashMs) {
             hasActiveAnimation.current = true;
             break;
           }
           // Death animation still active?
-          if (vs.dying && now - vs.deathTime < DEATH_TOTAL_MS) {
+          if (vs.dying && now - vs.deathTime < fx.deathTotalMs) {
             hasActiveAnimation.current = true;
             break;
           }
-          // Revive animation still active?
-          if (vs.reviving && now - vs.reviveTime < REVIVE_TOTAL_MS) {
+          // Revive / heal animation still active?
+          if (vs.reviving && now - vs.reviveTime < (vs.isHeal ? fx.healTotalMs : fx.reviveTotalMs)) {
             hasActiveAnimation.current = true;
             break;
           }
@@ -780,6 +814,25 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
     }
    
   }, [map, units, selectedUnitId, focusMode, events]);
+
+  // ---------- reactive paint updates for selection ring ----------
+  const selectionColor = useVisualConfig(s => s.selectionColor);
+  useEffect(() => {
+    try {
+      if (map.getLayer(SELECTED_LAYER_ID)) {
+        map.setPaintProperty(SELECTED_LAYER_ID, 'circle-stroke-color', selectionColor || '#ffffff');
+      }
+    } catch { /* ignore */ }
+  }, [map, selectionColor]);
+
+  const selectionRing = useVisualConfig(s => s.selectionRing);
+  useEffect(() => {
+    try {
+      if (map.getLayer(SELECTED_LAYER_ID)) {
+        map.setLayoutProperty(SELECTED_LAYER_ID, 'visibility', selectionRing ? 'visible' : 'none');
+      }
+    } catch { /* ignore */ }
+  }, [map, selectionRing]);
 
   return null;
 }

@@ -362,5 +362,17 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
     }
   }, [map, bombingEvents, currentTs]);
 
+  // ---------- reactive visibility for bombing blast radius ----------
+  const bombingRadiusEnabled = useVisualConfig(s => s.bombingRadius);
+
+  useEffect(() => {
+    try {
+      const vis = bombingRadiusEnabled ? 'visible' : 'none';
+      if (map.getLayer(BLAST_LAYER_ID)) {
+        map.setLayoutProperty(BLAST_LAYER_ID, 'visibility', vis);
+      }
+    } catch { /* ignore */ }
+  }, [map, bombingRadiusEnabled]);
+
   return null;
 }

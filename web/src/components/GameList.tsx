@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { fetchGames, fetchMeta, fetchHotspots, uploadFiles, UploadFileResult, GameInfo } from '../lib/api';
+import { fetchGames, fetchMeta, fetchHotspots, fetchKills, uploadFiles, UploadFileResult, GameInfo } from '../lib/api';
 import { usePlayback } from '../store/playback';
 import { useI18n } from '../lib/i18n';
 import { SettingsPanel } from './settings/SettingsPanel';
@@ -200,7 +200,7 @@ function UploadZone({ onUploaded }: { onUploaded: (g: GameInfo) => void }) {
 }
 
 export function GameList() {
-  const { setGame, setAllHotspots } = usePlayback();
+  const { setGame, setAllHotspots, setAllKills } = usePlayback();
   const { t } = useI18n();
   const [games, setGames] = useState<GameInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -220,12 +220,14 @@ export function GameList() {
     if (selecting) return;
     setSelecting(g.id);
     try {
-      const [meta, hotspots] = await Promise.all([
+      const [meta, hotspots, kills] = await Promise.all([
         fetchMeta(g.id),
         fetchHotspots(g.id),
+        fetchKills(g.id),
       ]);
       setGame(g.id, meta);
       setAllHotspots(hotspots ?? []);
+      setAllKills(kills ?? []);
     } catch (e: unknown) {
       setError(String(e));
       setSelecting(null);
@@ -292,11 +294,6 @@ export function GameList() {
             {games.map(g => (
               <div key={g.id} className="relative">
                 <GameCard game={g} onSelect={(game) => void handleSelect(game)} />
-                {selecting === g.id && (
-                  <div className="absolute inset-0 bg-zinc-900/70 rounded-xl flex items-center justify-center">
-                    <div className="w-5 h-5 border-2 border-zinc-500 border-t-blue-400 rounded-full animate-spin" />
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -310,6 +307,18 @@ export function GameList() {
         )}
       </div>
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+
+      {/* Full-screen initialization overlay — blocks interaction during game load */}
+      {selecting && (
+        <div className="fixed inset-0 z-50 bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+          <div className="relative w-12 h-12">
+            <div className="absolute inset-0 border-2 border-zinc-700 rounded-full" />
+            <div className="absolute inset-0 border-2 border-transparent border-t-blue-400 rounded-full animate-spin" />
+          </div>
+          <div className="text-sm font-medium text-zinc-200">{t('initializing_game')}</div>
+          <div className="text-xs text-zinc-500 max-w-xs text-center">{t('initializing_hint')}</div>
+        </div>
+      )}
     </div>
   );
 }

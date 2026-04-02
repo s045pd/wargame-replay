@@ -168,9 +168,12 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
 
     const animate = () => {
       const vc = useVisualConfig.getState();
-      const tracerDurMs = (vc.tracerDuration * 1000) || DEFAULT_TRACER_DURATION_MS;
-      // Linger is roughly 2.5x tracer duration (preserves the original ratio ~800/300)
-      const lingerMs = tracerDurMs * 2.67 || DEFAULT_LINGER_MS;
+      const baseDurMs = (vc.tracerDuration * 1000) || DEFAULT_TRACER_DURATION_MS;
+      // tracerSpeed multiplier: higher = faster travel = shorter duration
+      const tracerDurMs = baseDurMs / Math.max(vc.tracerSpeed, 0.1);
+      // Linger: line stays visible after bullet arrives, then fades
+      const lingerMs = tracerDurMs * 1.5 || DEFAULT_LINGER_MS;
+      const glowMultiplier = vc.tracerGlow;
       const elapsed = performance.now() - startWallRef.current;
       const totalMs = tracerDurMs + lingerMs;
 
@@ -198,7 +201,7 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
         ? (elapsed - tracerDurMs) / lingerMs
         : 0;
       const lineOpacity = 1 - lingerT * 0.9; // fade quickly
-      const glowOpacity = (1 - lingerT) * 0.6;
+      const glowOpacity = (1 - lingerT) * glowMultiplier;
 
       // Straight line from source to current bullet position
       const segments: [number, number][] = [srcCoord, [curLng, curLat]];
@@ -256,6 +259,26 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
 
     return () => cancelAnimationFrame(animRef.current);
   }, [map, hotspots, currentTs]);
+
+  // ---------- reactive paint updates for sniper tracer color & width ----------
+  const sniperTracerColor = useVisualConfig(s => s.sniperTracerColor);
+  const tracerWidthCfg = useVisualConfig(s => s.tracerWidth);
+
+  useEffect(() => {
+    try {
+      const color = sniperTracerColor || '#00ccff';
+      if (map.getLayer(GLOW_LAYER)) {
+        map.setPaintProperty(GLOW_LAYER, 'line-color', color);
+        map.setPaintProperty(GLOW_LAYER, 'line-width', tracerWidthCfg * 3);
+      }
+      if (map.getLayer(LINE_LAYER)) {
+        map.setPaintProperty(LINE_LAYER, 'line-width', tracerWidthCfg);
+      }
+      if (map.getLayer(HEAD_LAYER)) {
+        map.setPaintProperty(HEAD_LAYER, 'circle-stroke-color', color);
+      }
+    } catch { /* ignore */ }
+  }, [map, sniperTracerColor, tracerWidthCfg]);
 
   return null;
 }

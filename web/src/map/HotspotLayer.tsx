@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type * as mapboxgl from 'maplibre-gl';
 import { HotspotEvent } from '../lib/api';
+import { useVisualConfig } from '../store/visualConfig';
 
 interface HotspotLayerProps {
   map: mapboxgl.Map;
@@ -100,6 +101,15 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
   const addSourceAndLayers = useCallback(() => {
     if (map.getSource(HS_SOURCE)) return;
 
+    const vc = useVisualConfig.getState();
+    const hsColor = vc.hotspotCircleColor || '#ffa000';
+    // Derive stroke rgba from hotspotCircleColor
+    const r = parseInt(hsColor.slice(1, 3), 16);
+    const g = parseInt(hsColor.slice(3, 5), 16);
+    const b = parseInt(hsColor.slice(5, 7), 16);
+    const pulseStroke = `rgba(${r}, ${g}, ${b}, 0.3)`;
+    const coreStroke = `rgba(${r}, ${g}, ${b}, 0.5)`;
+
     const zoom = map.getZoom();
     map.addSource(HS_SOURCE, {
       type: 'geojson',
@@ -115,7 +125,7 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
         'circle-radius': ['get', 'pulsePx'],
         'circle-color': ['get', 'pulseColor'],
         'circle-stroke-width': 1,
-        'circle-stroke-color': 'rgba(255, 160, 0, 0.3)',
+        'circle-stroke-color': pulseStroke,
         'circle-pitch-alignment': 'map',
       },
     });
@@ -129,7 +139,7 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
         'circle-radius': ['get', 'corePx'],
         'circle-color': ['get', 'coreColor'],
         'circle-stroke-width': 1.5,
-        'circle-stroke-color': 'rgba(255, 100, 0, 0.5)',
+        'circle-stroke-color': coreStroke,
         'circle-pitch-alignment': 'map',
       },
     });

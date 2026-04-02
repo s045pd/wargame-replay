@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type * as mapboxgl from 'maplibre-gl';
 import type { HotspotEvent } from '../lib/api';
+import { useVisualConfig } from '../store/visualConfig';
 
 interface SniperTracerLayerProps {
   map: mapboxgl.Map;
@@ -15,10 +16,9 @@ const LINE_LAYER = 'sniper-tracer-line-layer';
 const GLOW_LAYER = 'sniper-tracer-glow-layer';
 const HEAD_LAYER = 'sniper-tracer-head-layer';
 
-// ── Duration of the tracer animation (ms real-time) ──
-const TRACER_DURATION_MS = 300;
-// ── How long the full line stays visible after animation completes (ms) ──
-const LINGER_MS = 800;
+// ── Fallback durations (overridden by visualConfig at runtime) ──
+const DEFAULT_TRACER_DURATION_MS = 300;
+const DEFAULT_LINGER_MS = 800;
 
 /**
  * SniperTracerLayer — renders an animated tracer ray for long-range kills.
@@ -39,6 +39,10 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
   const addSourcesAndLayers = useCallback(() => {
     if (map.getSource(LINE_SOURCE)) return;
 
+    const vc = useVisualConfig.getState();
+    const tracerColor = vc.sniperTracerColor || '#00ccff';
+    const tracerW = vc.tracerWidth;
+
     // Line source (for the tracer path)
     map.addSource(LINE_SOURCE, {
       type: 'geojson',
@@ -57,8 +61,8 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
       type: 'line',
       source: LINE_SOURCE,
       paint: {
-        'line-color': '#00ccff',
-        'line-width': 6,
+        'line-color': tracerColor,
+        'line-width': tracerW * 3,
         'line-opacity': ['get', 'glowOpacity'],
         'line-blur': 8,
       },
@@ -72,7 +76,7 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
       source: LINE_SOURCE,
       paint: {
         'line-color': '#ffffff',
-        'line-width': 2,
+        'line-width': tracerW,
         'line-opacity': ['get', 'lineOpacity'],
       },
       layout: { 'line-cap': 'round' },
@@ -88,7 +92,7 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
         'circle-color': '#ffffff',
         'circle-opacity': ['get', 'opacity'],
         'circle-stroke-width': 2,
-        'circle-stroke-color': '#00ccff',
+        'circle-stroke-color': tracerColor,
         'circle-stroke-opacity': ['get', 'opacity'],
       },
     });
@@ -116,6 +120,18 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
   // ── Main animation effect ──
   useEffect(() => {
     if (!currentTs) return;
+
+    // Early exit if sniper tracers are disabled
+    const vcCheck = useVisualConfig.getState();
+    if (!vcCheck.sniperTracerEnabled) {
+      const lineSrc = map.getSource(LINE_SOURCE) as mapboxgl.GeoJSONSource | undefined;
+      const headSrc = map.getSource(HEAD_SOURCE) as mapboxgl.GeoJSONSource | undefined;
+      lineSrc?.setData({ type: 'FeatureCollection', features: [] });
+      headSrc?.setData({ type: 'FeatureCollection', features: [] });
+      cancelAnimationFrame(animRef.current);
+      return;
+    }
+
     const curMs = new Date(currentTs.replace(' ', 'T')).getTime();
     if (isNaN(curMs)) return;
 
@@ -151,8 +167,12 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
     const dstCoord: [number, number] = [best.dstLng!, best.dstLat!];
 
     const animate = () => {
+      const vc = useVisualConfig.getState();
+      const tracerDurMs = (vc.tracerDuration * 1000) || DEFAULT_TRACER_DURATION_MS;
+      // Linger is roughly 2.5x tracer duration (preserves the original ratio ~800/300)
+      const lingerMs = tracerDurMs * 2.67 || DEFAULT_LINGER_MS;
       const elapsed = performance.now() - startWallRef.current;
-      const totalMs = TRACER_DURATION_MS + LINGER_MS;
+      const totalMs = tracerDurMs + lingerMs;
 
       if (elapsed > totalMs) {
         // Animation done — clear
@@ -164,7 +184,7 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
       }
 
       // t: 0→1 during tracer travel, then stays at 1 during linger
-      const t = Math.min(elapsed / TRACER_DURATION_MS, 1);
+      const t = Math.min(elapsed / tracerDurMs, 1);
       // Fast ease-out — bullet arrives almost instantly
       const eased = 1 - Math.pow(1 - t, 3);
 
@@ -174,8 +194,8 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
 
       // Build line from src to current bullet position
       // During linger phase, show full line but fade
-      const lingerT = elapsed > TRACER_DURATION_MS
-        ? (elapsed - TRACER_DURATION_MS) / LINGER_MS
+      const lingerT = elapsed > tracerDurMs
+        ? (elapsed - tracerDurMs) / lingerMs
         : 0;
       const lineOpacity = 1 - lingerT * 0.9; // fade quickly
       const glowOpacity = (1 - lingerT) * 0.6;

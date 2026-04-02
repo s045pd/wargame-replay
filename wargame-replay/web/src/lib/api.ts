@@ -35,7 +35,7 @@ export interface BombingEvent {
 
 export interface POIObject {
   id: number;
-  type: number; // 1=base camp, 2=vehicle, 3=supply cache, 4=control point, 5=station
+  type: number; // 1=base camp, 2=兵站(supply station), 3=supply cache, 4=control point, 5=station
   team: number; // 0=red, 1=blue, 2=neutral
   resource: number;
   lat: number;
@@ -79,6 +79,9 @@ export interface UnitPosition {
   team: string;
   alive: boolean;
   hp: number;
+  ammo: number;
+  supply: number;
+  revivalTokens: number;
   name?: string;
   class: UnitClass;
   flags: string;
@@ -98,7 +101,7 @@ export interface GameEvent {
 
 export interface HotspotEvent {
   id: number;
-  type: 'firefight' | 'killstreak' | 'mass_casualty' | 'engagement' | 'bombardment';
+  type: 'firefight' | 'killstreak' | 'mass_casualty' | 'engagement' | 'bombardment' | 'long_range';
   startTs: string;
   endTs: string;
   peakTs: string;
@@ -112,6 +115,11 @@ export interface HotspotEvent {
   units?: number[];
   focusUnitId?: number;
   focusName?: string;
+  distance?: number;
+  srcLat?: number;
+  srcLng?: number;
+  dstLat?: number;
+  dstLng?: number;
 }
 
 export interface Frame {

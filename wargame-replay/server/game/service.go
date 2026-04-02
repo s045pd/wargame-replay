@@ -77,10 +77,7 @@ type Service struct {
 	hitEventsByTs map[string][]decoder.GameEvent
 	// sorted unique timestamps that have events (for binary search in collectEvents)
 	hitTimestamps []string
-	// shooterAliveTs: sorted timestamps at which each unit was the SOURCE of a hit/kill.
-	// Used as "proof of life" — a unit that fires a shot is necessarily alive.
-	shooterAliveTs map[int][]string
-	// Unit class configuration
+	// Unit class configuration (sidecar override)
 	unitClasses *UnitClassConfig
 }
 
@@ -164,16 +161,36 @@ func LoadGame(dbPath string) (*Service, error) {
 		meta:          gameMeta,
 		hpTimeline:     make(map[int][]hpEntry),
 		hitEventsByTs:  make(map[string][]decoder.GameEvent),
-		shooterAliveTs: make(map[int][]string),
 		unitClasses:    ucfg,
 	}
 
-	// Load hit events, index by timestamp, and build HP timeline
+	// Load hit events, index by timestamp, and build HP timeline.
+	// Deduplicate events: some databases contain duplicate rows for the same
+	// (type, srcID, dstID, timestamp, HP) combination.
+	// HP is included in the key so that successive hits in the same second
+	// from the same shooter are preserved (e.g. two rapid shots reducing
+	// HP from 70→40 — same src/dst/ts but different HP).
+	type evKey struct {
+		Type  string
+		SrcID int
+		DstID int
+		Ts    string
+		HP    int
+	}
+	seenEvents := make(map[evKey]bool)
+
 	hitEvents, err := decoder.LoadHitEvents(db)
 	if err != nil {
 		log.Printf("hit event load warning for %s: %v", dbPath, err)
 	} else {
 		for i := range hitEvents {
+			// Deduplicate: skip if exact same (type, src, dst, ts) already seen
+			k := evKey{hitEvents[i].Type, hitEvents[i].SrcID, hitEvents[i].DstID, hitEvents[i].Ts, hitEvents[i].HP}
+			if seenEvents[k] {
+				continue
+			}
+			seenEvents[k] = true
+
 			// Attach player names and class info
 			hitEvents[i].SrcName = players[hitEvents[i].SrcID]
 			hitEvents[i].DstName = players[hitEvents[i].DstID]
@@ -188,19 +205,14 @@ func LoadGame(dbPath string) (*Service, error) {
 				Ts: ts,
 				HP: hitEvents[i].HP,
 			})
-
-			// Track shooter "proof of life" — a unit that fires a shot is alive.
-			// This handles respawns that generate no explicit revive event.
-			shooterID := hitEvents[i].SrcID
-			evType := hitEvents[i].Type
-			if shooterID != 0 && shooterID != victimID && (evType == "kill" || evType == "hit") {
-				sts := svc.shooterAliveTs[shooterID]
-				// Deduplicate: only append if timestamp is new (events are sorted by ts)
-				if len(sts) == 0 || sts[len(sts)-1] != ts {
-					svc.shooterAliveTs[shooterID] = append(sts, ts)
-				}
-			}
 		}
+	}
+
+	// Ensure per-unit HP timelines are sorted for binary search correctness.
+	for id := range svc.hpTimeline {
+		sort.Slice(svc.hpTimeline[id], func(i, j int) bool {
+			return svc.hpTimeline[id][i].Ts < svc.hpTimeline[id][j].Ts
+		})
 	}
 
 	// Build sorted timestamp index for binary search in collectEvents.
@@ -257,6 +269,12 @@ func (s *Service) UnitClasses() *UnitClassConfig {
 	return s.unitClasses
 }
 
+// ClearFrameCache invalidates all cached frames, forcing recomputation.
+// Used after changes to unit classes or other frame-level metadata.
+func (s *Service) ClearFrameCache() {
+	s.cache.Clear()
+}
+
 // ActiveHotspots returns all hotspot events whose time range includes ts.
 func (s *Service) ActiveHotspots(ts string) []hotspot.HotspotEvent {
 	var active []hotspot.HotspotEvent
@@ -269,15 +287,17 @@ func (s *Service) ActiveHotspots(ts string) []hotspot.HotspotEvent {
 }
 
 // accumWindow is the number of seconds to look back when accumulating unit positions.
-// Each DB record contains only a subset (~26) of all units; over 5 seconds the full
-// set (~136+) cycles through.
-const accumWindow = 5
+// Each DB record contains only a subset (~26) of all units; over 7 seconds the full
+// set (~136+) cycles through. 7s captures slightly more units than 5s.
+const accumWindow = 7
 
 func (s *Service) GetFrame(ts string) (*Frame, error) {
 	if cached, ok := s.cache.Get(ts); ok {
 		var f Frame
-		json.Unmarshal(cached, &f)
-		return &f, nil
+		if err := json.Unmarshal(cached, &f); err == nil {
+			return &f, nil
+		}
+		// Corrupt cache entry — fall through to recompute
 	}
 
 	_, found := s.idx.Lookup(ts)
@@ -287,11 +307,7 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 
 	// Accumulate DataType=1 position records over a sliding window.
 	// Each record only contains ~26 units; we need multiple seconds to see all.
-	type unitEntry struct {
-		pos decoder.UnitPosition
-		ts  string // timestamp of the position record this unit came from
-	}
-	unitMap := make(map[uint16]unitEntry)
+	unitMap := make(map[uint16]decoder.UnitPosition)
 	var actualTs string
 
 	rows, err := s.db.Query(
@@ -315,7 +331,53 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		}
 		actualTs = rowTs // last (most recent) timestamp
 		for _, u := range decoder.DecodePositionFrame(blob) {
-			unitMap[u.ID] = unitEntry{pos: u, ts: rowTs} // newer records overwrite older ones
+			// Skip ghost/garbage IDs (e.g. 32768+) that appear in some databases.
+			// Only include units present in the player tag table.
+			if _, known := s.players[int(u.ID)]; !known {
+				continue
+			}
+			unitMap[u.ID] = u // newer records overwrite older ones
+		}
+	}
+
+	// Fallback: for units missing from the 7-second window (e.g. stationary units
+	// whose positions stopped being reported), search a wider 120-second window.
+	// Scan backwards (DESC) so we find the most recent position first.
+	if len(unitMap) < len(s.players) {
+		missing := make(map[uint16]bool)
+		for id := range s.players {
+			uid := uint16(id)
+			if _, ok := unitMap[uid]; !ok {
+				missing[uid] = true
+			}
+		}
+		if len(missing) > 0 {
+			const fallbackWindow = 120
+			fbRows, fbErr := s.db.Query(
+				`SELECT LogData FROM record
+				 WHERE SrcType=1 AND DataType=1
+				   AND LogTime >= datetime(?, '-' || ? || ' seconds')
+				   AND LogTime < datetime(?, '-' || ? || ' seconds')
+				 ORDER BY LogTime DESC`,
+				ts, fallbackWindow, ts, accumWindow,
+			)
+			if fbErr == nil {
+				for fbRows.Next() && len(missing) > 0 {
+					var blob []byte
+					if err := fbRows.Scan(&blob); err != nil {
+						continue
+					}
+					for _, u := range decoder.DecodePositionFrame(blob) {
+						if missing[u.ID] {
+							if _, known := s.players[int(u.ID)]; known {
+								unitMap[u.ID] = u
+								delete(missing, u.ID)
+							}
+						}
+					}
+				}
+				fbRows.Close()
+			}
 		}
 	}
 
@@ -349,13 +411,25 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		actualTs = ts
 	}
 
-	// Convert map to slice, resolve coordinates, attach names, HP, and class.
-	// Use per-unit position timestamps to reconcile alive/dead with HP timeline.
+	// Convert map to slice, resolve coordinates, attach names, and reconcile HP.
+	//
+	// HP reconciliation strategy:
+	//   Alive/dead comes from position flags[0] (>0 means alive). This is the
+	//   ground truth for alive/dead status — it reflects revivals that generate
+	//   no explicit event. Position HP defaults to 100 (alive) or 0 (dead).
+	//
+	//   The event timeline provides the actual HP values (from hit/kill/heal
+	//   events). When event data is available, it overrides the default HP.
+	//
+	//   Conflict resolution:
+	//     - Position says alive + event says HP=0 → unit was revived silently → HP=100
+	//     - Position says dead + event says HP>0 → killed since last event → HP=0
+	//     - Position says alive + event says HP>0 → trust event HP
+	//
+	//   Class comes from position flags[1] (decoded in DecodePositionEntry),
+	//   with unitclasses.json sidecar as a user-override.
 	units := make([]decoder.UnitPosition, 0, len(unitMap))
-	for _, ue := range unitMap {
-		u := ue.pos
-		posTs := ue.ts
-		posAlive := u.Alive // raw position alive flag (flags[3] == 0xFE/0xFF)
+	for _, u := range unitMap {
 
 		lat, lng := s.resolver.Convert(u.RawLat, u.RawLng)
 		if s.resolver.Mode() == decoder.CoordWGS84 {
@@ -368,17 +442,14 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 		if name, ok := s.players[int(u.ID)]; ok {
 			u.Name = name
 		}
-		u.Class = s.unitClasses.Get(int(u.ID))
+		// Use sidecar override if present, otherwise keep class from position flags
+		if override := s.unitClasses.Get(int(u.ID)); override != string(decoder.ClassRifle) {
+			u.Class = override
+		}
 
-		// Apply HP from timeline: find latest hit event for this unit <= actualTs.
-		// Reconcile with position alive flag using per-unit timestamps:
-		// - If position data is more recent than the last HP event, trust position flags
-		//   (handles respawns/revivals that don't generate a 0x41 event).
-		// - If HP event is more recent, trust HP for alive/dead determination.
-		// - Proof-of-life override: if the unit fired a shot after their recorded death,
-		//   they must have respawned — force alive.
+		// Reconcile HP with event timeline.
+		// Position data provides alive/dead truth; event timeline provides actual HP.
 		if timeline, ok := s.hpTimeline[int(u.ID)]; ok {
-			// Binary search for the latest entry <= actualTs
 			lo, hi := 0, len(timeline)-1
 			bestIdx := -1
 			for lo <= hi {
@@ -391,45 +462,18 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 				}
 			}
 			if bestIdx >= 0 {
-				lastEventTs := timeline[bestIdx].Ts
-				u.HP = timeline[bestIdx].HP
-
-				if posTs >= lastEventTs {
-					// Position data recorded AT or AFTER the last HP event —
-					// position alive flag is authoritative.
-					if posAlive && u.HP <= 0 {
-						u.HP = 100 // respawned without explicit revive event
-					} else if !posAlive && u.HP > 0 {
-						u.HP = 0 // died without a recorded kill event
+				eventHP := timeline[bestIdx].HP
+				if u.Alive {
+					// Position says alive.
+					if eventHP > 0 {
+						// Event agrees alive — use event HP (actual damage value).
+						u.HP = eventHP
 					}
-					u.Alive = posAlive
+					// else: event says HP=0 but position says alive →
+					//   unit was revived (silent revival). Keep default HP=100.
 				} else {
-					// HP event is more recent — HP determines alive/dead
-					u.Alive = u.HP > 0
-				}
-
-				// Proof-of-life: if unit is marked dead but fired a shot AFTER their
-				// death event and before/at actualTs, they must have respawned.
-				if !u.Alive {
-					if shootTimes, ok := s.shooterAliveTs[int(u.ID)]; ok {
-						// Binary search: latest shoot time <= actualTs
-						sLo, sHi := 0, len(shootTimes)-1
-						sBest := -1
-						for sLo <= sHi {
-							sMid := (sLo + sHi) / 2
-							if shootTimes[sMid] <= actualTs {
-								sBest = sMid
-								sLo = sMid + 1
-							} else {
-								sHi = sMid - 1
-							}
-						}
-						if sBest >= 0 && shootTimes[sBest] > lastEventTs {
-							// Unit fired after recorded death → alive
-							u.Alive = true
-							u.HP = 100
-						}
-					}
+					// Position says dead → trust it. HP=0 already set by decoder.
+					u.HP = 0
 				}
 			}
 		}
@@ -439,27 +483,6 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 
 	// Collect events: default window is actualTs..ts (1-second)
 	events := s.collectEvents(actualTs, ts)
-
-	// Frame-level cross-reference: if a unit appears as shooter (SrcID) in this
-	// frame's events but is marked dead, force alive. This is a belt-and-suspenders
-	// safety net — the HP timeline proof-of-life should handle most cases, but the
-	// frame events may fall in a gap between position records.
-	shooterInFrame := make(map[uint16]bool)
-	for _, ev := range events {
-		if ev.SrcID != 0 && ev.SrcID != ev.DstID && (ev.Type == "kill" || ev.Type == "hit") {
-			shooterInFrame[uint16(ev.SrcID)] = true
-		}
-	}
-	if len(shooterInFrame) > 0 {
-		for i := range units {
-			if !units[i].Alive && shooterInFrame[units[i].ID] {
-				units[i].Alive = true
-				if units[i].HP <= 0 {
-					units[i].HP = 100
-				}
-			}
-		}
-	}
 
 	frame := &Frame{
 		Type:     "frame",
@@ -499,6 +522,8 @@ func (s *Service) collectEvents(fromTs, toTs string) []decoder.GameEvent {
 
 // GetFrameRange returns a frame at `ts` but collects events from `fromTs` to `ts`.
 // This ensures no events are skipped during fast-forward playback.
+// The lower bound is exclusive: events at exactly fromTs were already delivered
+// in the previous frame, so we use the range (fromTs, ts] to prevent duplicates.
 func (s *Service) GetFrameRange(fromTs, ts string) (*Frame, error) {
 	// Get the base frame (positions, POIs, etc.) — may be cached
 	frame, err := s.GetFrame(ts)
@@ -509,9 +534,31 @@ func (s *Service) GetFrameRange(fromTs, ts string) (*Frame, error) {
 	if fromTs == "" || fromTs >= frame.Ts {
 		return frame, nil
 	}
-	// Re-collect events over the wider range
-	frame.Events = s.collectEvents(fromTs, ts)
+	// Re-collect events over the wider range with exclusive lower bound
+	frame.Events = s.collectEventsAfter(fromTs, ts)
 	return frame, nil
+}
+
+// collectEventsAfter gathers events with fromTs < ev.Ts <= toTs (exclusive lower bound).
+// Used by GetFrameRange to prevent boundary overlap with the previous frame.
+func (s *Service) collectEventsAfter(fromTs, toTs string) []decoder.GameEvent {
+	events := make([]decoder.GameEvent, 0)
+
+	startIdx := sort.SearchStrings(s.hitTimestamps, fromTs)
+
+	for i := startIdx; i < len(s.hitTimestamps); i++ {
+		ts := s.hitTimestamps[i]
+		if ts > toTs {
+			break
+		}
+		// Exclusive lower bound: skip events at exactly fromTs
+		if ts == fromTs {
+			continue
+		}
+		events = append(events, s.hitEventsByTs[ts]...)
+	}
+
+	return events
 }
 
 func loadPlayers(db *sql.DB) map[int]string {

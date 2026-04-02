@@ -1,16 +1,13 @@
 package decoder
 
 import (
-	"database/sql"
 	"testing"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestDecodeKillEvents(t *testing.T) {
-	db, err := sql.Open("sqlite3", "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db?mode=ro")
-	if err != nil {
-		t.Skip("test db not found")
-	}
+	db := openTestDB(t)
 	defer db.Close()
 
 	events, err := LoadAllEvents(db)

@@ -1,5 +1,6 @@
 import { Play, Pause, SkipForward, SkipBack, ChevronDown } from 'lucide-react';
 import { usePlayback } from '../store/playback';
+import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
 
 const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128] as const;
@@ -34,12 +35,21 @@ function addSeconds(ts: string, seconds: number, min: string, max: string): stri
   return toDbTs(clamped);
 }
 
-interface TransportControlsProps {
-  immersive: boolean;
-}
-
-export function TransportControls({ immersive: _immersive }: TransportControlsProps) {
-  const { playing, speed, currentTs, meta, play, pause, seek, setSpeed } = usePlayback();
+export function TransportControls() {
+  const {
+    playing, speed, currentTs, meta, play, pause, seek, setSpeed,
+    trailEnabled, setTrailEnabled,
+    killLineEnabled, setKillLineEnabled,
+    hitLineEnabled, setHitLineEnabled,
+    reviveEffectEnabled, setReviveEffectEnabled,
+    healEffectEnabled, setHealEffectEnabled,
+    hitFeedbackEnabled, setHitFeedbackEnabled,
+    deathEffectEnabled, setDeathEffectEnabled,
+    killstreakSlowDiv, setKillstreakSlowDiv,
+    longRangeSlowSpeed, setLongRangeSlowSpeed,
+    bombardSlowDiv, setBombardSlowDiv,
+  } = usePlayback();
+  const { focusDarkMap, toggleFocusDarkMap } = useDirector();
   const { t } = useI18n();
 
   const handleSkip = (delta: number) => {
@@ -110,6 +120,158 @@ export function TransportControls({ immersive: _immersive }: TransportControlsPr
             size={12}
             className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-zinc-400"
           />
+        </div>
+      </div>
+
+      {/* Divider before effect toggles */}
+      <div className="h-4 w-px bg-zinc-700" />
+
+      {/* Effect toggle buttons — styled like top bar */}
+      <div className="flex items-center gap-1" title={t('fx_group_tip')}>
+        <span className="text-[10px] text-zinc-500 mr-0.5">{t('fx_group')}</span>
+        {/* Master trail toggle */}
+        <button
+          onClick={() => setTrailEnabled(!trailEnabled)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            trailEnabled ? 'bg-purple-700 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('fx_trail')} — ${trailEnabled ? 'ON' : 'OFF'}（${t('fx_kill_line')}/${t('fx_hit_line')}）`}
+        >
+          {t('fx_trail')}
+        </button>
+        {/* Kill line — subordinate to trail */}
+        <button
+          onClick={() => { if (trailEnabled) setKillLineEnabled(!killLineEnabled); }}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            !trailEnabled
+              ? 'bg-zinc-800/50 text-zinc-700 cursor-not-allowed'
+              : killLineEnabled
+                ? 'bg-red-800 text-red-200'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={!trailEnabled ? `${t('fx_kill_line')} — ${t('fx_trail')} OFF` : `${t('fx_kill_line')} — ${killLineEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_kill_line')}
+        </button>
+        {/* Hit line — subordinate to trail */}
+        <button
+          onClick={() => { if (trailEnabled) setHitLineEnabled(!hitLineEnabled); }}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            !trailEnabled
+              ? 'bg-zinc-800/50 text-zinc-700 cursor-not-allowed'
+              : hitLineEnabled
+                ? 'bg-orange-800 text-orange-200'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={!trailEnabled ? `${t('fx_hit_line')} — ${t('fx_trail')} OFF` : `${t('fx_hit_line')} — ${hitLineEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_hit_line')}
+        </button>
+
+        <div className="h-3 w-px bg-zinc-700/50" />
+
+        {/* Death effect */}
+        <button
+          onClick={() => setDeathEffectEnabled(!deathEffectEnabled)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            deathEffectEnabled ? 'bg-red-900 text-red-300' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('fx_death')} — ${deathEffectEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_death')}
+        </button>
+        {/* Revive effect */}
+        <button
+          onClick={() => setReviveEffectEnabled(!reviveEffectEnabled)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            reviveEffectEnabled ? 'bg-green-800 text-green-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('fx_revive')} — ${reviveEffectEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_revive')}
+        </button>
+        {/* Heal effect */}
+        <button
+          onClick={() => setHealEffectEnabled(!healEffectEnabled)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            healEffectEnabled ? 'bg-emerald-800 text-emerald-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('fx_heal')} — ${healEffectEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_heal')}
+        </button>
+        {/* Hit feedback */}
+        <button
+          onClick={() => setHitFeedbackEnabled(!hitFeedbackEnabled)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            hitFeedbackEnabled ? 'bg-amber-800 text-amber-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('fx_hit_feedback')} — ${hitFeedbackEnabled ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_hit_feedback')}
+        </button>
+
+        <div className="h-3 w-px bg-zinc-700/50" />
+
+        {/* Focus dark map toggle */}
+        <button
+          onClick={toggleFocusDarkMap}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            focusDarkMap ? 'bg-indigo-800 text-indigo-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('focus_dark_map')} — ${focusDarkMap ? 'ON' : 'OFF'}`}
+        >
+          {t('focus_dark_map')}
+        </button>
+      </div>
+
+      {/* Slowdown settings */}
+      <div className="h-4 w-px bg-zinc-700" />
+      <div className="flex items-center gap-1" title={t('slow_group_tip')}>
+        <span className="text-[10px] text-zinc-500 mr-0.5">{t('slow_group')}</span>
+        {/* Killstreak divisor */}
+        <div className="flex items-center gap-0.5">
+          <span className="text-[10px] text-zinc-600">{t('slow_killstreak')}</span>
+          <select
+            value={killstreakSlowDiv}
+            onChange={e => setKillstreakSlowDiv(Number(e.target.value))}
+            className="appearance-none bg-zinc-800 text-[10px] text-zinc-300 border border-zinc-700 rounded px-1 py-0 cursor-pointer hover:bg-zinc-700 focus:outline-none"
+          >
+            <option value={0}>{t('slow_off')}</option>
+            <option value={2}>÷2</option>
+            <option value={4}>÷4</option>
+            <option value={8}>÷8</option>
+            <option value={16}>÷16</option>
+          </select>
+        </div>
+        {/* Long-range target speed */}
+        <div className="flex items-center gap-0.5">
+          <span className="text-[10px] text-zinc-600">{t('slow_longrange')}</span>
+          <select
+            value={longRangeSlowSpeed}
+            onChange={e => setLongRangeSlowSpeed(Number(e.target.value))}
+            className="appearance-none bg-zinc-800 text-[10px] text-zinc-300 border border-zinc-700 rounded px-1 py-0 cursor-pointer hover:bg-zinc-700 focus:outline-none"
+          >
+            <option value={0}>{t('slow_off')}</option>
+            <option value={1}>1x</option>
+            <option value={2}>2x</option>
+            <option value={4}>4x</option>
+            <option value={8}>8x</option>
+          </select>
+        </div>
+        {/* Bombardment divisor */}
+        <div className="flex items-center gap-0.5">
+          <span className="text-[10px] text-zinc-600">{t('slow_bombard')}</span>
+          <select
+            value={bombardSlowDiv}
+            onChange={e => setBombardSlowDiv(Number(e.target.value))}
+            className="appearance-none bg-zinc-800 text-[10px] text-zinc-300 border border-zinc-700 rounded px-1 py-0 cursor-pointer hover:bg-zinc-700 focus:outline-none"
+          >
+            <option value={0}>{t('slow_off')}</option>
+            <option value={2}>÷2</option>
+            <option value={4}>÷4</option>
+            <option value={8}>÷8</option>
+          </select>
         </div>
       </div>
 

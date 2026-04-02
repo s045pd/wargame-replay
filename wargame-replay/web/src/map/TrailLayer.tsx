@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
-import type * as mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'maplibre-gl';
+import type { FilterSpecification } from 'maplibre-gl';
 import { UnitPosition, GameEvent } from '../lib/api';
+import type { FocusMode } from '../store/director';
+import { usePlayback } from '../store/playback';
 
 interface TrailLayerProps {
   map: mapboxgl.Map;
@@ -8,6 +11,7 @@ interface TrailLayerProps {
   trailEnabled: boolean;
   events?: GameEvent[];
   selectedUnitId?: number | null;
+  focusMode?: FocusMode;
 }
 
 // ---------- source / layer IDs ----------
@@ -46,6 +50,8 @@ interface TracerEntry {
   isKill: boolean;
   isFollowed: boolean;
   startTime: number;
+  /** Opacity multiplier for focus mode: 1.0 = normal, <1 = dimmed */
+  focusDim: number;
 }
 
 function lerpCoord(
@@ -102,7 +108,7 @@ function buildAnimatedGeoJson(
       properties: {
         isKill: tr.isKill,
         isFollowed: tr.isFollowed,
-        opacity: result.opacity,
+        opacity: result.opacity * tr.focusDim,
       },
     });
   }
@@ -110,7 +116,7 @@ function buildAnimatedGeoJson(
   return { type: 'FeatureCollection', features };
 }
 
-export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }: TrailLayerProps) {
+export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, focusMode }: TrailLayerProps) {
   const layersAddedRef = useRef(false);
   const tracersRef = useRef<TracerEntry[]>([]);
   const rafRef = useRef<number>(0);
@@ -128,10 +134,10 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
       });
 
       // Filters: followed tracers get green, others get kill/hit colors
-      const notFollowed: mapboxgl.Expression = ['!=', ['get', 'isFollowed'], true];
-      const killFilter: mapboxgl.Expression = ['all', ['==', ['get', 'isKill'], true], notFollowed];
-      const hitFilter: mapboxgl.Expression = ['all', ['==', ['get', 'isKill'], false], notFollowed];
-      const followedFilter: mapboxgl.Expression = ['==', ['get', 'isFollowed'], true];
+      const notFollowed = ['!=', ['get', 'isFollowed'], true] as unknown as FilterSpecification;
+      const killFilter = ['all', ['==', ['get', 'isKill'], true], notFollowed] as unknown as FilterSpecification;
+      const hitFilter = ['all', ['==', ['get', 'isKill'], false], notFollowed] as unknown as FilterSpecification;
+      const followedFilter = ['==', ['get', 'isFollowed'], true] as unknown as FilterSpecification;
 
       // --- kill glow ---
       map.addLayer({
@@ -246,7 +252,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
       }
       layersAddedRef.current = false;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map]);
 
   // ---------- spawn new tracers when events arrive ----------
@@ -262,8 +268,17 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
     const now = performance.now();
     let addedCount = 0;
 
+    // Pre-compute focus-related unit set for O(1) lookup
+    const focusActive = focusMode?.active ?? false;
+    const focusRelatedSet = new Set<number>(focusMode?.relatedUnitIds);
+    const focusUnitId = focusMode?.focusUnitId ?? -1;
+
+    const { killLineEnabled, hitLineEnabled } = usePlayback.getState();
     for (const ev of events) {
       if (ev.type !== 'hit' && ev.type !== 'kill') continue;
+      // Respect per-type toggles
+      if (ev.type === 'kill' && !killLineEnabled) continue;
+      if (ev.type === 'hit' && !hitLineEnabled) continue;
       const src = unitMap.get(ev.src);
       const dst = ev.dst !== undefined ? unitMap.get(ev.dst) : undefined;
       if (!src || !dst) continue;
@@ -273,6 +288,16 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
       // Mark tracers from the followed unit as green
       const isFollowed = selectedUnitId != null && src.id === selectedUnitId;
 
+      // Focus mode: dim tracers from non-related units
+      let focusDim = 1.0;
+      if (focusActive) {
+        const srcIsRelated = src.id === focusUnitId || focusRelatedSet.has(src.id);
+        const dstIsRelated = dst.id === focusUnitId || focusRelatedSet.has(dst.id);
+        if (!srcIsRelated && !dstIsRelated) {
+          focusDim = 0.06; // almost invisible
+        }
+      }
+
       tracersRef.current.push({
         srcLng: src.lng,
         srcLat: src.lat,
@@ -281,6 +306,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
         isKill: ev.type === 'kill',
         isFollowed,
         startTime: now + addedCount * 60,
+        focusDim,
       });
       addedCount++;
     }
@@ -293,10 +319,15 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
 
         const now = performance.now();
 
-        // Prune expired tracers
-        tracersRef.current = tracersRef.current.filter(
-          tr => (now - tr.startTime) < TRACER_DURATION_MS,
-        );
+        // Prune expired tracers in-place (avoids allocating new array every frame)
+        const tracers = tracersRef.current;
+        let writeIdx = 0;
+        for (let i = 0; i < tracers.length; i++) {
+          if ((now - tracers[i].startTime) < TRACER_DURATION_MS) {
+            tracers[writeIdx++] = tracers[i];
+          }
+        }
+        tracers.length = writeIdx;
 
         const source = map.getSource(ATTACK_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
         if (source) {
@@ -313,7 +344,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId }:
       };
       rafRef.current = requestAnimationFrame(animate);
     }
-  }, [map, units, trailEnabled, events, selectedUnitId]);
+  }, [map, units, trailEnabled, events, selectedUnitId, focusMode]);
 
   // Clear when trails disabled
   useEffect(() => {

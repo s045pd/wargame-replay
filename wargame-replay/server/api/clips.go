@@ -27,6 +27,8 @@ type ClipExport struct {
 
 // clipFilePath returns the sidecar .clips.json path for a game.
 func (h *Handler) clipFilePath(gameID string) (string, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for _, g := range h.games {
 		if g.ID == gameID {
 			return g.FilePath + ".clips.json", nil

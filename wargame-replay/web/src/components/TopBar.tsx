@@ -9,7 +9,7 @@ interface TopBarProps {
 }
 
 export function TopBar({ onShowShortcuts }: TopBarProps) {
-  const { meta, coordMode, mapStyle, setMapStyle, trailEnabled, setTrailEnabled, resetGame, setSelectedUnitId, setFollowSelectedUnit } = usePlayback();
+  const { meta, coordMode, mapStyle, setMapStyle, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
 
@@ -47,6 +47,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
             onSelect={(id) => {
               setSelectedUnitId(id);
               setFollowSelectedUnit(true);
+              setManualFollow(true);
             }}
           />
         </>
@@ -107,18 +108,6 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
               </button>
             ))}
           </div>
-          <div className="h-4 w-px bg-zinc-700" />
-          {/* Trail toggle */}
-          <button
-            onClick={() => setTrailEnabled(!trailEnabled)}
-            className={`px-2 py-1 text-xs rounded transition-colors ${
-              trailEnabled
-                ? 'bg-purple-700 text-white'
-                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
-            }`}
-          >
-            {t('trails')}
-          </button>
           <div className="h-4 w-px bg-zinc-700" />
         </>
       )}

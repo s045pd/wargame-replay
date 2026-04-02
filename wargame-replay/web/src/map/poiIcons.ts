@@ -9,7 +9,7 @@
  *                     poi-{type}-{color}-dead   e.g. poi-tank-red-dead
  */
 
-import type * as mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'maplibre-gl';
 
 const S = 32; // icon canvas size (px)
 const S2 = S / 2; // center
@@ -706,10 +706,10 @@ export function registerPOIIcons(map: mapboxgl.Map): void {
 export function poiTypeToIconKey(poiType: number): POIIconKey {
   switch (poiType) {
     case 1: return 'base';
-    case 2: return 'truck';      // vehicle
+    case 2: return 'fob';         // 兵站 (supply station)
     case 3: return 'supply';     // supply cache
-    case 4: return 'control';    // control point
-    case 5: return 'fob';        // station / forward base
+    case 4: return 'control';    // 争夺点 (contest point)
+    case 5: return 'base';       // 前哨 (outpost)
     default: return 'flag';
   }
 }

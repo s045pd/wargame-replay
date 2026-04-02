@@ -42,8 +42,13 @@ func (h *Handler) UploadGame(c *gin.Context) {
 
 	for field, entries := range c.Request.MultipartForm.File {
 		for i, header := range entries {
-			ext := strings.ToLower(filepath.Ext(header.Filename))
-			entry := fileEntry{filename: header.Filename, field: field, idx: i}
+			// Sanitize: reject filenames with path separators to prevent traversal
+			baseName := filepath.Base(header.Filename)
+			if baseName != header.Filename || strings.ContainsAny(header.Filename, "/\\") {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(baseName))
+			entry := fileEntry{filename: baseName, field: field, idx: i}
 			switch ext {
 			case ".db":
 				dbFiles = append(dbFiles, entry)
@@ -250,17 +255,24 @@ func (h *Handler) processSingleDB(filename string, file io.Reader) UploadResult 
 	info.PlayerCount = playerCount
 	info.FilePath = destPath
 
-	// Check for ID collision
-	h.mu.RLock()
-	for _, g := range h.games {
-		if g.ID == info.ID {
-			info.ID = fmt.Sprintf("%s-%d", info.ID, len(h.games))
+	// Atomic check-for-collision + add under write lock
+	h.mu.Lock()
+	baseID := info.ID
+	for n := 1; ; n++ {
+		conflict := false
+		for _, g := range h.games {
+			if g.ID == info.ID {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
 			break
 		}
+		info.ID = fmt.Sprintf("%s-%d", baseID, n)
 	}
-	h.mu.RUnlock()
-
-	h.AddGame(*info)
+	h.games = append(h.games, *info)
+	h.mu.Unlock()
 
 	fmt.Printf("Uploaded game: %s (%s, %d bytes)\n", filename, info.ID, written)
 

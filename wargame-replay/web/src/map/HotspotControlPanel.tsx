@@ -10,6 +10,7 @@ const TYPE_COLORS: Record<HotspotType, string> = {
   mass_casualty: '#cc0000',
   engagement:    '#ff8800',
   bombardment:   '#ffee44',
+  long_range:    '#00ccff',
 };
 
 /**
@@ -31,7 +32,7 @@ export function HotspotControlPanel() {
   }, [allHotspots]);
 
   return (
-    <div className="absolute bottom-24 right-4 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-2.5 py-2 text-xs font-mono backdrop-blur-sm min-w-[160px]">
+    <div className="absolute bottom-8 right-2 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-2.5 py-2 text-xs font-mono backdrop-blur-sm min-w-[160px]">
       {/* Debug overlay toggle */}
       <button
         onClick={toggleDebugOverlay}
@@ -42,7 +43,7 @@ export function HotspotControlPanel() {
         }`}
       >
         <span className="text-sm">{debugOverlay ? '🔍' : '○'}</span>
-        <span>Debug Overlay</span>
+        <span>{t('debug_overlay')}</span>
       </button>
 
       {/* Separator */}
@@ -50,7 +51,7 @@ export function HotspotControlPanel() {
 
       {/* Type filter label */}
       <div className="text-zinc-500 text-[10px] uppercase tracking-wider mb-1">
-        {t('hotspot')} Filter
+        {t('hotspot_filter')}
       </div>
 
       {/* Per-type filter buttons */}

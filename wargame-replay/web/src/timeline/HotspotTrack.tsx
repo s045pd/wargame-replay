@@ -12,6 +12,7 @@ const TYPE_COLORS: Record<string, string> = {
   mass_casualty: '#cc0000',
   engagement:    '#ff8800',
   bombardment:   '#ffee44',
+  long_range:    '#00ccff',
 };
 const DEFAULT_COLOR = '#ff9900';
 
@@ -22,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
   mass_casualty: '大规模伤亡',
   engagement:    '大规模交火',
   bombardment:   '轰炸',
+  long_range:    '超远击杀',
 };
 
 function parseTs(ts: string): number {
@@ -56,6 +58,12 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
   const endMs = useMemo(() => (meta ? parseTs(meta.endTime) : 0), [meta]);
   const totalMs = endMs - startMs;
 
+  // Memoize sorted hotspots — avoids O(n log n) sort every render/frame
+  const sortedHotspots = useMemo(
+    () => [...hotspots].sort((a, b) => a.score - b.score),
+    [hotspots],
+  );
+
   // Draw hotspot bars on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -76,10 +84,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
     const curMs = currentTs ? parseTs(currentTs) : startMs;
 
-    // Sort by score ascending so high-score events render on top
-    const sorted = [...hotspots].sort((a, b) => a.score - b.score);
-
-    for (const hs of sorted) {
+    for (const hs of sortedHotspots) {
       const hsStart = parseTs(hs.startTs);
       const hsEnd = parseTs(hs.endTs);
       const hsPeak = parseTs(hs.peakTs);
@@ -114,7 +119,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
       ctx.globalAlpha = 1;
     }
-  }, [meta, hotspots, currentTs, startMs, endMs, totalMs]);
+  }, [meta, sortedHotspots, currentTs, startMs, endMs, totalMs]);
 
   // Resize observer for responsive redraw
   useEffect(() => {

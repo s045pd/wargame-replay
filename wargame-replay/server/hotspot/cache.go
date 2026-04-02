@@ -50,16 +50,28 @@ func LoadCache(dbPath string) ([]HotspotEvent, bool) {
 }
 
 // SaveCache serialises the hotspot events to the sidecar cache file.
+// Uses atomic write (tmp + rename) to avoid corrupting existing cache on error.
 func SaveCache(dbPath string, events []HotspotEvent) error {
 	cachePath := cacheFilePath(dbPath)
+	tmpPath := cachePath + ".tmp"
 
-	f, err := os.Create(cachePath)
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	if err := json.NewEncoder(f).Encode(events); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		os.Remove(tmpPath)
 		return err
 	}
 

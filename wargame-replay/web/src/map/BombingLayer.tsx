@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import type * as mapboxgl from 'mapbox-gl';
+import { useEffect, useRef, useCallback } from 'react';
+import type * as mapboxgl from 'maplibre-gl';
 import { BombingEvent } from '../lib/api';
 
 interface BombingLayerProps {
@@ -12,9 +12,18 @@ const SOURCE_ID = 'bombing-source';
 const BLAST_LAYER_ID = 'bombing-blast-layer';
 const CORE_LAYER_ID = 'bombing-core-layer';
 const LABEL_LAYER_ID = 'bombing-label-layer';
+const SHOCKWAVE_SOURCE = 'bombing-shockwave-source';
+const SHOCKWAVE_LAYER = 'bombing-shockwave-layer';
+const FLASH_LAYER = 'bombing-flash-layer';
 
 // How long (in ms) a bombing marker stays visible after its timestamp
 const DISPLAY_DURATION_MS = 120_000; // 2 minutes
+// Shockwave animation duration (real-time ms)
+const SHOCKWAVE_DURATION_MS = 2500;
+/** Delay before second ring starts (must be < SHOCKWAVE_DURATION_MS) */
+const RING2_DELAY_MS = 200;
+// Initial flash duration
+const FLASH_DURATION_MS = 600;
 
 function eventLabel(ev: BombingEvent): string {
   if (ev.subType === 1) return '空投';  // airdrop
@@ -33,7 +42,6 @@ function eventBlastColor(ev: BombingEvent): string {
 
 /**
  * Build GeoJSON for bombing events that should be visible at the current time.
- * An event is visible if currentTs >= event.ts and within DISPLAY_DURATION_MS.
  */
 function buildGeoJson(
   events: BombingEvent[],
@@ -51,10 +59,8 @@ function buildGeoJson(
     if (isNaN(evTime)) continue;
 
     const delta = now - evTime;
-    // Show events: from 30s before impact to DISPLAY_DURATION_MS after
     if (delta < -30_000 || delta > DISPLAY_DURATION_MS) continue;
 
-    // Fade out over the display duration
     const age = Math.max(0, delta);
     const fadeRatio = 1 - age / DISPLAY_DURATION_MS;
     const opacity = Math.max(0.2, fadeRatio);
@@ -67,7 +73,7 @@ function buildGeoJson(
       },
       properties: {
         label: eventLabel(ev),
-        time: ev.ts.slice(11, 19), // HH:MM:SS
+        time: ev.ts.slice(11, 19),
         color: eventColor(ev),
         blastColor: eventBlastColor(ev),
         opacity,
@@ -86,8 +92,10 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
   const tsRef = useRef(currentTs);
   tsRef.current = currentTs;
 
-  // Track if any events are near current time for efficiency
-  const [hasActiveEvents, setHasActiveEvents] = useState(false);
+  // Track shockwave animations per event
+  const shockwaveStartRef = useRef(new Map<string, number>()); // evTs → wall-clock start
+  const animRef = useRef<number>(0);
+  const isAnimatingRef = useRef(false);
 
   const addSourceAndLayers = useCallback(() => {
     if (map.getSource(SOURCE_ID)) return;
@@ -95,6 +103,11 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
     map.addSource(SOURCE_ID, {
       type: 'geojson',
       data: buildGeoJson(eventsRef.current, tsRef.current),
+    });
+
+    map.addSource(SHOCKWAVE_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
     });
 
     // Outer blast radius
@@ -129,6 +142,37 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
       },
     });
 
+    // Shockwave expanding ring
+    map.addLayer({
+      id: SHOCKWAVE_LAYER,
+      type: 'circle',
+      source: SHOCKWAVE_SOURCE,
+      paint: {
+        'circle-radius': ['get', 'radius'],
+        'circle-color': 'transparent',
+        'circle-opacity': 0,
+        'circle-stroke-width': ['get', 'strokeWidth'],
+        'circle-stroke-color': ['get', 'strokeColor'],
+        'circle-stroke-opacity': ['get', 'strokeOpacity'],
+        'circle-pitch-alignment': 'map',
+      },
+    });
+
+    // Impact flash (bright center pulse)
+    map.addLayer({
+      id: FLASH_LAYER,
+      type: 'circle',
+      source: SHOCKWAVE_SOURCE,
+      filter: ['==', ['get', 'isFlash'], 1],
+      paint: {
+        'circle-radius': ['get', 'flashRadius'],
+        'circle-color': '#ffee44',
+        'circle-opacity': ['get', 'flashOpacity'],
+        'circle-blur': 0.5,
+        'circle-pitch-alignment': 'map',
+      },
+    });
+
     // Event label
     map.addLayer({
       id: LABEL_LAYER_ID,
@@ -153,33 +197,155 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
 
   useEffect(() => {
     addSourceAndLayers();
-
     const onStyleLoad = () => addSourceAndLayers();
     map.on('style.load', onStyleLoad);
 
     return () => {
       map.off('style.load', onStyleLoad);
+      cancelAnimationFrame(animRef.current);
+      isAnimatingRef.current = false;
       try {
         if (map.getLayer(LABEL_LAYER_ID)) map.removeLayer(LABEL_LAYER_ID);
+        if (map.getLayer(FLASH_LAYER)) map.removeLayer(FLASH_LAYER);
+        if (map.getLayer(SHOCKWAVE_LAYER)) map.removeLayer(SHOCKWAVE_LAYER);
         if (map.getLayer(CORE_LAYER_ID)) map.removeLayer(CORE_LAYER_ID);
         if (map.getLayer(BLAST_LAYER_ID)) map.removeLayer(BLAST_LAYER_ID);
+        if (map.getSource(SHOCKWAVE_SOURCE)) map.removeSource(SHOCKWAVE_SOURCE);
         if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map, addSourceAndLayers]);
 
-  // Update on currentTs or bombingEvents change
+  // Update static markers + trigger shockwave animations
   useEffect(() => {
     const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
     if (!source) return;
 
     const geojson = buildGeoJson(bombingEvents, currentTs);
     source.setData(geojson);
-    setHasActiveEvents(geojson.features.length > 0);
-  }, [map, bombingEvents, currentTs, hasActiveEvents]);
+    // geojson.features.length > 0 means active bombing events are visible
+
+    // Detect newly appearing bombing events → start shockwave animation
+    const curTime = new Date(currentTs).getTime();
+    if (isNaN(curTime)) return;
+
+    const now = performance.now();
+    for (const ev of bombingEvents) {
+      if (ev.subType === 1) continue; // no shockwave for airdrops
+      const evTime = new Date(ev.ts).getTime();
+      const delta = curTime - evTime;
+      // Trigger shockwave when event is within 2 game-seconds of impact
+      if (delta >= -1000 && delta <= 2000) {
+        const key = `${ev.lat}_${ev.lng}_${ev.ts}`;
+        if (!shockwaveStartRef.current.has(key)) {
+          shockwaveStartRef.current.set(key, now);
+        }
+      }
+    }
+
+    // Purge old entries
+    for (const [key, startTime] of shockwaveStartRef.current) {
+      if (now - startTime > SHOCKWAVE_DURATION_MS + 500) {
+        shockwaveStartRef.current.delete(key);
+      }
+    }
+
+    // Start animation loop if needed
+    if (shockwaveStartRef.current.size > 0 && !isAnimatingRef.current) {
+      isAnimatingRef.current = true;
+
+      const animateShockwave = () => {
+        if (!isAnimatingRef.current) return;
+        const animNow = performance.now();
+        const features: GeoJSON.Feature[] = [];
+        let anyActive = false;
+
+        for (const [key, startTime] of shockwaveStartRef.current) {
+          const elapsed = animNow - startTime;
+          // Must cover the delayed second ring (starts at RING2_DELAY_MS)
+          if (elapsed > SHOCKWAVE_DURATION_MS + RING2_DELAY_MS) continue;
+          anyActive = true;
+
+          const [latStr, lngStr] = key.split('_');
+          const lat = parseFloat(latStr);
+          const lng = parseFloat(lngStr);
+
+          // Expanding ring (first ring — only during SHOCKWAVE_DURATION_MS)
+          if (elapsed <= SHOCKWAVE_DURATION_MS) {
+            const t = elapsed / SHOCKWAVE_DURATION_MS;
+            const ringRadius = 10 + 60 * Math.pow(t, 0.5); // fast start, decelerates
+            const ringOpacity = 0.8 * (1 - t);
+            const strokeWidth = 3 * (1 - t * 0.7);
+
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [lng, lat] },
+              properties: {
+                radius: ringRadius,
+                strokeWidth,
+                strokeColor: '#ff6622',
+                strokeOpacity: ringOpacity,
+              isFlash: 0,
+              flashRadius: 0,
+              flashOpacity: 0,
+            },
+          });
+          }
+
+          // Second shockwave ring (delayed)
+          if (elapsed > RING2_DELAY_MS) {
+            const t2 = (elapsed - RING2_DELAY_MS) / SHOCKWAVE_DURATION_MS;
+            if (t2 < 1) {
+              features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [lng, lat] },
+                properties: {
+                  radius: 10 + 45 * Math.pow(t2, 0.5),
+                  strokeWidth: 2 * (1 - t2 * 0.7),
+                  strokeColor: '#ffaa00',
+                  strokeOpacity: 0.5 * (1 - t2),
+                  isFlash: 0,
+                  flashRadius: 0,
+                  flashOpacity: 0,
+                },
+              });
+            }
+          }
+
+          // Central flash
+          if (elapsed < FLASH_DURATION_MS) {
+            const ft = elapsed / FLASH_DURATION_MS;
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [lng, lat] },
+              properties: {
+                radius: 0,
+                strokeWidth: 0,
+                strokeColor: '#ffffff',
+                strokeOpacity: 0,
+                isFlash: 1,
+                flashRadius: 20 * (1 - ft * 0.5),
+                flashOpacity: 0.9 * (1 - ft),
+              },
+            });
+          }
+        }
+
+        const swSrc = map.getSource(SHOCKWAVE_SOURCE) as mapboxgl.GeoJSONSource | undefined;
+        swSrc?.setData({ type: 'FeatureCollection', features });
+
+        if (anyActive) {
+          animRef.current = requestAnimationFrame(animateShockwave);
+        } else {
+          isAnimatingRef.current = false;
+          swSrc?.setData({ type: 'FeatureCollection', features: [] });
+        }
+      };
+
+      animRef.current = requestAnimationFrame(animateShockwave);
+    }
+  }, [map, bombingEvents, currentTs]);
 
   return null;
 }

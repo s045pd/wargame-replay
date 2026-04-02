@@ -159,6 +159,13 @@ export function PlayerSearch({ players, onSelect }: PlayerSearchProps) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={t('search_placeholder')}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-form-type="other"
+          data-lpignore="true"
+          data-1p-ignore
           className="w-44 bg-transparent text-xs text-zinc-200 outline-none placeholder:text-zinc-600"
         />
         <kbd className="text-zinc-600 text-[10px] border border-zinc-700 rounded px-1 cursor-pointer hover:text-zinc-400" onClick={close}>Esc</kbd>

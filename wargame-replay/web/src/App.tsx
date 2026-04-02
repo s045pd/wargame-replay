@@ -13,14 +13,13 @@ import { BookmarkList } from './clips/BookmarkList';
 import { ClipEditor } from './clips/ClipEditor';
 import { useHotspotDirector } from './hooks/useHotspotDirector';
 import { useHotspotFilter } from './store/hotspotFilter';
-import { useI18n } from './lib/i18n';
+
 
 export default function App() {
   const { gameId, connectWs, connected, play, pause, playing, units, coordMode, currentTs } = usePlayback();
-  const { mode, setMode, autoMode, toggleAutoMode } = useDirector();
+  const { mode, setMode, toggleAutoMode, immersive, toggleImmersive } = useDirector();
   const { toggleDebugOverlay } = useHotspotFilter();
   const { addBookmark } = useClips();
-  const { t } = useI18n();
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -135,6 +134,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [playing, play, pause]);
 
+  // H key — toggle immersive mode
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'h' || e.key === 'H') {
+        toggleImmersive();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleImmersive]);
+
   // ? key — toggle shortcuts help; Esc closes it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -155,37 +167,30 @@ export default function App() {
     return <GameList />;
   }
 
+  // In immersive mode: always show map (replay layout), hide top/bottom chrome
+  const showMap = immersive || mode === 'replay';
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
-      {mode === 'director' ? (
+      {!immersive && <TopBar onShowShortcuts={() => setShowShortcuts(true)} />}
+      {!immersive && mode === 'director' ? (
         <DirectorPanel />
       ) : (
         <div className="flex-1 relative">
-          {coordMode === 'wgs84' ? (
-            <MapView units={units} />
-          ) : (
-            <RelativeCanvas units={units} />
+          {showMap && (
+            coordMode === 'wgs84' ? (
+              <MapView units={units} immersive={immersive} />
+            ) : (
+              <RelativeCanvas units={units} />
+            )
           )}
-          {/* Auto-director toggle in replay mode */}
-          <button
-            onClick={toggleAutoMode}
-            className={`absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded text-xs font-medium transition-all backdrop-blur-sm ${
-              autoMode
-                ? 'bg-amber-600/90 text-white shadow-lg shadow-amber-600/30 border border-amber-500'
-                : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 border border-zinc-700 hover:border-zinc-500'
-            }`}
-            title="Auto-track hotspot events (A key)"
-          >
-            {autoMode ? `⚡ ${t('auto_director_on')}` : `⚡ ${t('auto_director_btn')}`}
-          </button>
         </div>
       )}
-      <Timeline />
-      {showBookmarks && (
+      {!immersive && <Timeline />}
+      {!immersive && showBookmarks && (
         <BookmarkList onClose={() => setShowBookmarks(false)} />
       )}
-      {showClipEditor && (
+      {!immersive && showClipEditor && (
         <ClipEditor onClose={() => setShowClipEditor(false)} />
       )}
       {showShortcuts && (

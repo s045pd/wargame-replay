@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
-import type * as mapboxgl from 'mapbox-gl';
+import type * as mapboxgl from 'maplibre-gl';
 import { Graticule, GameMeta } from '../lib/api';
 
 interface GraticuleLayerProps {
@@ -22,51 +22,95 @@ function letterLabel(idx: number): string {
   return s;
 }
 
-/** Pre-compute all grid lines from graticule parameters. */
+interface GridRow { lat: number; label: string }
+interface GridCol { lng: number; label: string }
+
+/** Pre-compute all grid lines + zone labels from graticule parameters.
+ *
+ * Grid convention (per user requirement):
+ *  - Vertical lines (longitude) divide columns; column label (A, B, C …)
+ *    goes in the ZONE between two adjacent vertical lines.
+ *  - Horizontal lines (latitude) divide rows; row label (1, 2, 3 …)
+ *    goes in the ZONE between two adjacent horizontal lines.
+ *  - A zone is therefore identified by e.g. "B3".
+ *
+ * `latBegin` is the NORTH edge of the grid. Lines go DOWNWARD (south).
+ * `lngBegin` is the WEST edge of the grid. Lines go RIGHTWARD (east).
+ */
 function computeGridData(
   grat: Graticule,
   bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number },
 ) {
-  const rows: { lat: number; label: string }[] = [];
-  const cols: { lng: number; label: string }[] = [];
+  const rows: GridRow[] = [];
+  const cols: GridCol[] = [];
+  // Zone centres: midpoints between consecutive grid lines for label placement
+  const rowZones: { midLat: number; label: string }[] = [];
+  const colZones: { midLng: number; label: string }[] = [];
 
-  if (!bounds) return { rows, cols, minLat: 0, maxLat: 0, minLng: 0, maxLng: 0, lines: emptyFC() };
+  if (!bounds) return { rows, cols, rowZones, colZones, minLat: 0, maxLat: 0, minLng: 0, maxLng: 0, lines: emptyFC() };
 
-  const minLat = bounds.minLat - grat.latSpace;
-  const maxLat = bounds.maxLat + grat.latSpace;
-  const minLng = bounds.minLng - grat.lngSpace;
-  const maxLng = bounds.maxLng + grat.lngSpace;
+  const pad = 1; // extra cells of padding around bounds
+  const minLat = bounds.minLat - grat.latSpace * pad;
+  const maxLat = bounds.maxLat + grat.latSpace * pad;
+  const minLng = bounds.minLng - grat.lngSpace * pad;
+  const maxLng = bounds.maxLng + grat.lngSpace * pad;
 
   const lineFeatures: GeoJSON.Feature[] = [];
 
-  // Latitude lines (horizontal) — Y axis, labeled 1, 2, 3, ...
-  let latIdx = 0;
-  for (let lat = grat.latBegin; lat <= maxLat; lat += grat.latSpace) {
-    if (lat < minLat) { latIdx++; continue; }
-    rows.push({ lat, label: `${latIdx + 1}` });
+  // ── Grid dimensions from `cr` field ──
+  // `cr` encodes grid info in two bytes: high byte and low byte.
+  // Columns = high + 2, Rows = low + 1.
+  // e.g. cr=4110 (0x100E) → high=16,low=14 → 18 columns × 15 rows
+  const totalCols = (grat.cr >> 8) + 2;
+  const totalRows = (grat.cr & 0xFF) + 1;
+
+  // ── Latitude lines (horizontal) — latBegin is NORTH edge, iterate SOUTHWARD ──
+  // Generate lines from latBegin going south, plus one step north for padding
+  for (let lat = grat.latBegin + grat.latSpace; lat >= minLat; lat -= grat.latSpace) {
+    if (lat < minLat || lat > maxLat) continue;
+    rows.push({ lat, label: '' });
     lineFeatures.push({
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: [[minLng, lat], [maxLng, lat]] },
       properties: { axis: 'lat' },
     });
-    latIdx++;
   }
 
-  // Longitude lines (vertical) — X axis, labeled A, B, C, ...
-  let lngIdx = 0;
-  for (let lng = grat.lngBegin; lng <= maxLng; lng += grat.lngSpace) {
-    if (lng < minLng) { lngIdx++; continue; }
-    cols.push({ lng, label: letterLabel(lngIdx) });
+  // Row zone labels — absolute index n (0 = northernmost zone from latBegin)
+  // Label: bottom-to-top → 1 at southernmost (n = totalRows-1), ascending northward
+  for (let n = -1; n <= totalRows; n++) {
+    const northLat = grat.latBegin - n * grat.latSpace;
+    const midLat = northLat - grat.latSpace / 2;
+    if (midLat < minLat || midLat > maxLat) continue;
+    if (n < 0 || n >= totalRows) continue; // only label zones within the grid
+    rowZones.push({ midLat, label: `${totalRows - n}` });
+  }
+
+  // ── Longitude lines (vertical) — lngBegin is WEST edge, iterate EASTWARD ──
+  for (let lng = grat.lngBegin - grat.lngSpace; lng <= maxLng; lng += grat.lngSpace) {
+    if (lng < minLng || lng > maxLng) continue;
+    cols.push({ lng, label: '' });
     lineFeatures.push({
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: [[lng, minLat], [lng, maxLat]] },
       properties: { axis: 'lng' },
     });
-    lngIdx++;
+  }
+
+  // Column zone labels — absolute index n (0 = westernmost zone from lngBegin)
+  // Label: right-to-left → A at easternmost, ascending westward
+  // n=0 → R (letterLabel(totalCols-1)), n=totalCols-1 → A (letterLabel(0))
+  for (let n = -1; n <= totalCols; n++) {
+    const westLng = grat.lngBegin + n * grat.lngSpace;
+    const midLng = westLng + grat.lngSpace / 2;
+    if (midLng < minLng || midLng > maxLng) continue;
+    if (n < 0 || n >= totalCols) continue;
+    colZones.push({ midLng, label: letterLabel(totalCols - 1 - n) });
   }
 
   return {
-    rows, cols, minLat, maxLat, minLng, maxLng,
+    rows, cols, rowZones, colZones,
+    minLat, maxLat, minLng, maxLng,
     lines: { type: 'FeatureCollection' as const, features: lineFeatures },
   };
 }
@@ -109,33 +153,32 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
     });
   }, [map]);
 
-  // Update viewport-edge labels by projecting grid lines to screen pixels.
-  // Use viewport center lng/lat so the projected point is always on-screen,
-  // giving correct X/Y pixel coordinates for each grid line.
+  // Update viewport-edge labels by projecting zone midpoints to screen pixels.
+  // Labels are placed at the ZONE CENTRE (between two grid lines), not on lines.
   const updateEdgeLabels = useCallback(() => {
-    const { rows, cols } = gridRef.current;
+    const { rowZones, colZones } = gridRef.current;
     const canvas = map.getCanvas();
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     const center = map.getCenter();
 
-    // Row labels (1, 2, 3...) pinned to LEFT edge:
-    // project [center.lng, lat] to get screen-Y for each horizontal line
+    // Row zone labels (1, 2, 3 …) pinned to LEFT edge:
+    // project [center.lng, midLat] to get screen-Y for each zone centre
     const newLeft: EdgeLabel[] = [];
-    for (const r of rows) {
-      const pt = map.project([center.lng, r.lat]);
+    for (const r of rowZones) {
+      const pt = map.project([center.lng, r.midLat]);
       if (pt.y >= 0 && pt.y <= h) {
-        newLeft.push({ key: `r-${r.label}`, label: r.label, px: pt.y });
+        newLeft.push({ key: `rz-${r.label}`, label: r.label, px: pt.y });
       }
     }
 
-    // Column labels (A, B, C...) pinned to TOP edge:
-    // project [lng, center.lat] to get screen-X for each vertical line
+    // Column zone labels (A, B, C …) pinned to TOP edge:
+    // project [midLng, center.lat] to get screen-X for each zone centre
     const newTop: EdgeLabel[] = [];
-    for (const c of cols) {
-      const pt = map.project([c.lng, center.lat]);
+    for (const c of colZones) {
+      const pt = map.project([c.midLng, center.lat]);
       if (pt.x >= 0 && pt.x <= w) {
-        newTop.push({ key: `c-${c.label}`, label: c.label, px: pt.x });
+        newTop.push({ key: `cz-${c.label}`, label: c.label, px: pt.x });
       }
     }
 
@@ -167,12 +210,12 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
         // ignore
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [map, addLines, updateEdgeLabels]);
 
   return (
     <>
-      {/* Column labels — pinned to top edge */}
+      {/* Column zone labels (A, B, C …) — pinned to top edge, centred in zone */}
       {topLabels.map((l) => (
         <div
           key={l.key}
@@ -188,7 +231,7 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
           </span>
         </div>
       ))}
-      {/* Row labels — pinned to left edge */}
+      {/* Row zone labels (1, 2, 3 …) — pinned to left edge, centred in zone */}
       {leftLabels.map((l) => (
         <div
           key={l.key}

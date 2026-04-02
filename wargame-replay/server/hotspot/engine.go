@@ -16,7 +16,7 @@ const tsLayout = "2006-01-02 15:04:05"
 // HotspotEvent is a detected combat hotspot with a time range.
 type HotspotEvent struct {
 	ID           int     `json:"id"`
-	Type         string  `json:"type"`      // firefight, killstreak, mass_casualty, engagement, bombardment
+	Type         string  `json:"type"`      // firefight, killstreak, mass_casualty, engagement, bombardment, long_range
 	StartTs      string  `json:"startTs"`
 	EndTs        string  `json:"endTs"`
 	PeakTs       string  `json:"peakTs"`
@@ -28,8 +28,13 @@ type HotspotEvent struct {
 	Kills        int     `json:"kills"`
 	Hits         int     `json:"hits"`
 	Units        []int   `json:"units,omitempty"`
-	FocusUnitID  int     `json:"focusUnitId,omitempty"`  // star player for killstreak events
+	FocusUnitID  int     `json:"focusUnitId,omitempty"`  // star player for killstreak/long_range events
 	FocusName    string  `json:"focusName,omitempty"`    // name of the focus unit
+	Distance     int     `json:"distance,omitempty"`     // kill distance in metres (for long_range)
+	SrcLat       float64 `json:"srcLat,omitempty"`       // shooter position (long_range)
+	SrcLng       float64 `json:"srcLng,omitempty"`
+	DstLat       float64 `json:"dstLat,omitempty"`       // victim position (long_range)
+	DstLng       float64 `json:"dstLng,omitempty"`
 }
 
 // ---------- tuning constants ----------
@@ -40,9 +45,18 @@ const (
 	minClusterScore = 15  // discard clusters below this score (was 4)
 
 	// Per-type minimum requirements
-	minKillsFirefight = 2 // firefight must have at least 2 kills
-	minStreakKills    = 4 // killstreak requires 4+ kills from one player (was 3)
-	minKillsEngage   = 3 // engagement must have at least 3 kills
+	minKillsFirefight = 2  // firefight must have at least 2 kills
+	minStreakKills    = 4  // killstreak requires 4+ kills from one player (was 3)
+	minKillsEngage   = 3  // engagement must have at least 3 kills
+	maxStreakGapSec   = 60 // max seconds between consecutive kills in a streak
+
+	// Long-range kill detection — sweep from longRangeMaxM down by longRangeStep
+	// until a non-empty bucket is found (floor = longRangeMinM). Keep top N.
+	longRangeMaxM  = 600  // start scanning from this distance
+	longRangeMinM  = 250  // lowest bucket to try before giving up
+	longRangeStep  = 50   // bucket step (metres)
+	longRangeTopN  = 3    // keep top N kills from the first non-empty bucket
+	maxPosAgeSec   = 10   // max seconds a cached position may be stale for distance calc
 
 	// Spatial-temporal dedup: merge hotspots closer than this
 	dedupDistMetres = 200.0 // metres
@@ -74,23 +88,42 @@ func DetectHotspotEvents(
 	// Phase 1 — temporal clustering
 	clusters := temporalCluster(combat)
 
-	// Phase 2 — split overlong clusters
-	var split [][]decoder.GameEvent
+	// Phase 2 — extract killstreaks from FULL clusters (before splitting),
+	// then split for non-killstreak types.
+	//
+	// Why: splitLongCluster cuts at the biggest gap, which can break a true
+	// multi-kill streak that spans the gap into two sub-threshold halves.
+	// By detecting killstreaks on the unsplit cluster, we preserve them.
+	var hotspots []HotspotEvent
 	for _, cl := range clusters {
-		split = append(split, splitLongCluster(cl, maxClusterSec)...)
+		// Extract all per-player killstreaks from the full cluster
+		ksHotspots := extractKillstreaks(cl)
+		for i := range ksHotspots {
+			if ksHotspots[i].Score < minClusterScore {
+				continue
+			}
+			ksHotspots[i].CenterLat, ksHotspots[i].CenterLng, ksHotspots[i].Radius =
+				lookupSpatialInfo(db, resolver, ksHotspots[i].StartTs, ksHotspots[i].EndTs, ksHotspots[i].Units)
+			hotspots = append(hotspots, ksHotspots[i])
+		}
+
+		// Split and analyse for non-killstreak types (firefight, mass_casualty, engagement)
+		for _, subcl := range splitLongCluster(cl, maxClusterSec) {
+			h := analyseCluster(subcl)
+			if h.Score < minClusterScore {
+				continue
+			}
+			// Killstreaks already extracted above; skip from sub-clusters
+			if h.Type == "killstreak" {
+				continue
+			}
+			h.CenterLat, h.CenterLng, h.Radius = lookupSpatialInfo(db, resolver, h.StartTs, h.EndTs, h.Units)
+			hotspots = append(hotspots, h)
+		}
 	}
 
-	// Phase 3 — analyse, score, classify
-	var hotspots []HotspotEvent
-	for _, cl := range split {
-		h := analyseCluster(cl)
-		if h.Score < minClusterScore {
-			continue
-		}
-		// Look up spatial centre + real radius from all positions in the time range
-		h.CenterLat, h.CenterLng, h.Radius = lookupSpatialInfo(db, resolver, h.StartTs, h.EndTs, h.Units)
-		hotspots = append(hotspots, h)
-	}
+	// ---- long-range kill hotspots ----
+	hotspots = append(hotspots, detectLongRangeKills(db, resolver, combat)...)
 
 	// ---- bombing hotspots ----
 	for _, bev := range bombingEvents {
@@ -179,24 +212,338 @@ func splitLongCluster(events []decoder.GameEvent, maxSec int) [][]decoder.GameEv
 	return out
 }
 
+// ---------- killstreak pre-extraction ----------
+
+// extractKillstreaks detects all per-player kill streaks ≥ minStreakKills from
+// a full temporal cluster BEFORE splitting.  This prevents splitLongCluster
+// from breaking a true multi-kill run that spans a temporal gap into two
+// sub-threshold halves.
+//
+// A streak breaks when:
+//  1. The player dies (appears as victim in a kill event), OR
+//  2. More than maxStreakGapSec seconds pass between consecutive kills.
+//
+// This ensures killstreaks reflect short, intense bursts of kills — not a
+// player who survived for 30 minutes with occasional kills.
+//
+// Returns one HotspotEvent per qualifying player, with time ranges narrowed
+// to the streak's actual kills (plus padding).
+func extractKillstreaks(events []decoder.GameEvent) []HotspotEvent {
+	if len(events) == 0 {
+		return nil
+	}
+
+	maxGap := time.Duration(maxStreakGapSec) * time.Second
+
+	type streakInfo struct {
+		current     int
+		best        int
+		curVictims  []int
+		bestVictims []int
+		curTimes    []string // timestamps of kills in current streak
+		bestTimes   []string // timestamps of kills in best streak
+		lastKillTs  time.Time
+	}
+	streaks := map[int]*streakInfo{}
+	getStreak := func(id int) *streakInfo {
+		s, ok := streaks[id]
+		if !ok {
+			s = &streakInfo{}
+			streaks[id] = s
+		}
+		return s
+	}
+
+	for _, ev := range events {
+		if ev.Type != "kill" {
+			continue
+		}
+		evTime, _ := time.Parse(tsLayout, ev.Ts)
+
+		s := getStreak(ev.SrcID)
+		// Check time gap: if too long since last kill, reset the streak
+		if s.current > 0 && !s.lastKillTs.IsZero() && evTime.Sub(s.lastKillTs) > maxGap {
+			s.current = 0
+			s.curVictims = nil
+			s.curTimes = nil
+		}
+		s.current++
+		s.lastKillTs = evTime
+		if ev.DstID != 0 {
+			s.curVictims = append(s.curVictims, ev.DstID)
+		}
+		s.curTimes = append(s.curTimes, ev.Ts)
+		// >= to prefer the most recent streak of equal length (better spatial data)
+		if s.current >= s.best {
+			s.best = s.current
+			s.bestVictims = append([]int(nil), s.curVictims...)
+			s.bestTimes = append([]string(nil), s.curTimes...)
+		}
+		// Reset victim's streak (they died)
+		if ev.DstID != 0 {
+			vs := getStreak(ev.DstID)
+			vs.current = 0
+			vs.curVictims = nil
+			vs.curTimes = nil
+			vs.lastKillTs = time.Time{}
+		}
+	}
+
+	var results []HotspotEvent
+	for playerID, s := range streaks {
+		if s.best < minStreakKills {
+			continue
+		}
+
+		// Build unit list: killer + streak victims
+		focusSet := map[int]bool{playerID: true}
+		for _, vid := range s.bestVictims {
+			focusSet[vid] = true
+		}
+		unitIDs := make([]int, 0, len(focusSet))
+		for id := range focusSet {
+			unitIDs = append(unitIDs, id)
+		}
+		sort.Ints(unitIDs)
+
+		// Time range: first kill → last kill in the streak, with padding
+		startTs := addSecondsToTs(s.bestTimes[0], -3)
+		endTs := addSecondsToTs(s.bestTimes[len(s.bestTimes)-1], 12)
+		peakTs := s.bestTimes[len(s.bestTimes)-1]
+
+		// Score: streak quality + unit count
+		score := float64(s.best)*3.0 + float64(s.best)*2.5 + float64(len(focusSet))*0.3
+		if s.best >= 5 {
+			score += float64(s.best) * 1.5
+		}
+
+		results = append(results, HotspotEvent{
+			Type:        "killstreak",
+			StartTs:     startTs,
+			EndTs:       endTs,
+			PeakTs:      peakTs,
+			Score:       score,
+			Label:       fmt.Sprintf("连杀 ×%d", s.best),
+			Kills:       s.best,
+			Units:       unitIDs,
+			FocusUnitID: playerID,
+			Radius:      100,
+		})
+	}
+
+	// Deterministic ordering: highest score first, then lowest player ID
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].FocusUnitID < results[j].FocusUnitID
+	})
+
+	return results
+}
+
+// ---------- long-range kill detection ----------
+
+// detectLongRangeKills scans all kill events and identifies those where the
+// distance between shooter and victim exceeds the minimum threshold.
+//
+// Strategy:
+//  1. Single chronological pass through position frames and kill events,
+//     maintaining a timestamped latest-known-position map.  Positions older
+//     than maxPosAgeSec are discarded to avoid stale data from dead/respawned
+//     units producing false distances.
+//  2. Tiered top-N selection: kills are bucketed by distance in longRangeBucket
+//     steps (e.g. 150-199m, 200-249m, 250-299m…).  Within each bucket only
+//     the top longRangeTopN kills (by distance) are kept, so every distance
+//     tier is represented without flooding with lower-distance events.
+func detectLongRangeKills(
+	db *sql.DB,
+	resolver decoder.CoordResolver,
+	combatEvents []decoder.GameEvent,
+) []HotspotEvent {
+	// Filter to kill events with valid src/dst
+	var kills []decoder.GameEvent
+	for _, e := range combatEvents {
+		if e.Type == "kill" && e.SrcID != 0 && e.DstID != 0 {
+			kills = append(kills, e)
+		}
+	}
+	if len(kills) == 0 {
+		return nil
+	}
+
+	startTs := kills[0].Ts
+	endTs := kills[len(kills)-1].Ts
+
+	// Query all position frames in the kill time range (with padding for the
+	// accumulation window so we have positions before the first kill).
+	rows, err := db.Query(`
+		SELECT LogTime, LogData FROM record
+		WHERE SrcType=1 AND DataType=1
+		  AND LogTime >= datetime(?, '-10 seconds')
+		  AND LogTime <= datetime(?, '+5 seconds')
+		ORDER BY LogTime ASC
+	`, startTs, endTs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	// Read all frames into memory with parsed timestamps
+	type posFrame struct {
+		ts   time.Time
+		data []decoder.UnitPosition
+	}
+	var frames []posFrame
+	for rows.Next() {
+		var tsStr string
+		var blob []byte
+		if err := rows.Scan(&tsStr, &blob); err != nil {
+			continue
+		}
+		t, err := time.Parse(tsLayout, tsStr)
+		if err != nil {
+			continue
+		}
+		frames = append(frames, posFrame{ts: t, data: decoder.DecodePositionFrame(blob)})
+	}
+
+	// Merge pass: iterate through frames and kills in chronological order.
+	// Maintain a running latest-known-position map for each unit, WITH
+	// timestamps so we can discard stale positions (e.g. a unit that died
+	// minutes ago whose position was never updated — using it would produce
+	// wildly inaccurate distances).
+	type timedPos struct {
+		pos geoPoint
+		ts  time.Time
+	}
+	latestPos := make(map[uint16]timedPos)
+	fi := 0 // frame index
+	maxAge := time.Duration(maxPosAgeSec) * time.Second
+
+	var candidates []HotspotEvent
+	for _, kill := range kills {
+		killTime, err := time.Parse(tsLayout, kill.Ts)
+		if err != nil {
+			continue
+		}
+
+		// Advance position frames up to the kill time
+		for fi < len(frames) && !frames[fi].ts.After(killTime) {
+			ft := frames[fi].ts
+			for _, u := range frames[fi].data {
+				if u.RawLat == 0 && u.RawLng == 0 {
+					continue
+				}
+				lat, lng := resolver.Convert(u.RawLat, u.RawLng)
+				if lat != 0 || lng != 0 {
+					latestPos[u.ID] = timedPos{geoPoint{lat, lng}, ft}
+				}
+			}
+			fi++
+		}
+
+		// Look up positions of shooter and victim — reject stale entries
+		srcTp, srcOk := latestPos[uint16(kill.SrcID)]
+		dstTp, dstOk := latestPos[uint16(kill.DstID)]
+		if !srcOk || !dstOk {
+			continue
+		}
+		if killTime.Sub(srcTp.ts) > maxAge || killTime.Sub(dstTp.ts) > maxAge {
+			continue // position too old — likely from a previous life / different location
+		}
+
+		dist := haversineDist(srcTp.pos, dstTp.pos)
+		if dist < float64(longRangeMinM) {
+			continue
+		}
+
+		distInt := int(math.Round(dist))
+
+		// Center = midpoint between shooter and victim
+		centerLat := (srcTp.pos.lat + dstTp.pos.lat) / 2
+		centerLng := (srcTp.pos.lng + dstTp.pos.lng) / 2
+
+		// Radius = half the distance so both units are visible, with 20% padding
+		radius := math.Max(60, dist*0.6)
+
+		// Score scales with distance: 150m → 30, 200m → 40, 300m → 60, 500m → 100
+		score := dist / 5.0
+
+		candidates = append(candidates, HotspotEvent{
+			Type:        "long_range",
+			StartTs:     addSecondsToTs(kill.Ts, -5),
+			EndTs:       addSecondsToTs(kill.Ts, 25),
+			PeakTs:      kill.Ts,
+			CenterLat:   centerLat,
+			CenterLng:   centerLng,
+			Radius:      radius,
+			Score:       score,
+			Label:       fmt.Sprintf("超远击杀 %dm", distInt),
+			Kills:       1,
+			Units:       []int{kill.SrcID, kill.DstID},
+			FocusUnitID: kill.SrcID,
+			Distance:    distInt,
+			SrcLat:      srcTp.pos.lat,
+			SrcLng:      srcTp.pos.lng,
+			DstLat:      dstTp.pos.lat,
+			DstLng:      dstTp.pos.lng,
+		})
+	}
+
+	// --- Descending sweep: find the highest non-empty 50m bucket, keep top N ---
+	// Sweep from longRangeMaxM down to longRangeMinM in longRangeStep steps.
+	// The first bucket that contains any candidates wins; return its top N.
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Distance > candidates[j].Distance })
+
+	for floor := longRangeMaxM; floor >= longRangeMinM; floor -= longRangeStep {
+		var bucket []HotspotEvent
+		for _, h := range candidates {
+			if h.Distance >= floor {
+				bucket = append(bucket, h)
+			}
+		}
+		if len(bucket) == 0 {
+			continue
+		}
+		// Found a non-empty tier — keep top N (already sorted by distance desc)
+		n := longRangeTopN
+		if n > len(bucket) {
+			n = len(bucket)
+		}
+		return bucket[:n]
+	}
+
+	return nil
+}
+
 // ---------- cluster analysis ----------
 
+// analyseCluster classifies a (sub-)cluster into firefight, mass_casualty,
+// engagement, or killstreak.  When used in the main pipeline, killstreak
+// results from sub-clusters are skipped in favour of extractKillstreaks
+// output, but the classification is kept for self-contained correctness.
 func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 	kills, hits := 0, 0
-	shooterTotalKills := map[int]int{}
 	allUnits := map[int]bool{}
 	tsCounts := map[string]int{}
 
 	// --- True killstreak detection ---
 	// A killstreak is an unbroken sequence of kills by one player.
-	// The streak resets when the player appears as a victim (gets killed).
-	// Track per-player: current running streak, and their all-time best streak
-	// within this cluster, plus the victims during that best streak.
+	// The streak resets when:
+	//  1. The player appears as a victim (gets killed), OR
+	//  2. More than maxStreakGapSec seconds pass between consecutive kills.
+	maxGap := time.Duration(maxStreakGapSec) * time.Second
+
 	type streakInfo struct {
 		current     int
 		best        int
-		curVictims  []int // victims in current streak
-		bestVictims []int // victims in the best streak
+		curVictims  []int
+		bestVictims []int
+		curTimes    []string
+		bestTimes   []string
+		totalKills  int
+		lastKillTs  time.Time
 	}
 	streaks := map[int]*streakInfo{}
 
@@ -212,19 +559,28 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 	for _, ev := range events {
 		if ev.Type == "kill" {
 			kills++
-			shooterTotalKills[ev.SrcID]++
+			evTime, _ := time.Parse(tsLayout, ev.Ts)
 
 			// Advance killer's streak
 			s := getStreak(ev.SrcID)
+			// Check time gap: if too long since last kill, reset the streak
+			if s.current > 0 && !s.lastKillTs.IsZero() && evTime.Sub(s.lastKillTs) > maxGap {
+				s.current = 0
+				s.curVictims = nil
+				s.curTimes = nil
+			}
 			s.current++
+			s.totalKills++
+			s.lastKillTs = evTime
 			if ev.DstID != 0 {
 				s.curVictims = append(s.curVictims, ev.DstID)
 			}
-			if s.current > s.best {
+			s.curTimes = append(s.curTimes, ev.Ts)
+			// >= to prefer the most recent streak of equal length
+			if s.current >= s.best {
 				s.best = s.current
-				// Snapshot current victims as the best streak victims
-				s.bestVictims = make([]int, len(s.curVictims))
-				copy(s.bestVictims, s.curVictims)
+				s.bestVictims = append([]int(nil), s.curVictims...)
+				s.bestTimes = append([]string(nil), s.curTimes...)
 			}
 
 			// Reset victim's streak (they died)
@@ -232,6 +588,8 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 				vs := getStreak(ev.DstID)
 				vs.current = 0
 				vs.curVictims = nil
+				vs.curTimes = nil
+				vs.lastKillTs = time.Time{}
 			}
 		} else {
 			hits++
@@ -253,15 +611,25 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 		}
 	}
 
-	// Top kill-streak shooter (based on true unbroken streak, not total kills)
+	// Top kill-streak shooter — deterministic tie-breaking:
+	// prefer longer streak, then more total kills, then lower unit ID.
 	maxStreak := 0
 	topShooterID := 0
 	var topShooterVictims []int
+	var topShooterTimes []string
 	for id, s := range streaks {
 		if s.best > maxStreak {
 			maxStreak = s.best
 			topShooterID = id
 			topShooterVictims = s.bestVictims
+			topShooterTimes = s.bestTimes
+		} else if s.best == maxStreak && maxStreak > 0 {
+			topS := streaks[topShooterID]
+			if s.totalKills > topS.totalKills || (s.totalKills == topS.totalKills && id < topShooterID) {
+				topShooterID = id
+				topShooterVictims = s.bestVictims
+				topShooterTimes = s.bestTimes
+			}
 		}
 	}
 
@@ -276,6 +644,9 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 	}
 
 	// --- Classify & label ---
+	// Note: mass_casualty is checked before killstreak so that when killstreaks
+	// are extracted separately (by extractKillstreaks), this function correctly
+	// classifies the remaining cluster as mass_casualty rather than killstreak.
 	evType := "firefight"
 	var label string
 
@@ -284,12 +655,12 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 	dur := tN.Sub(t0)
 
 	switch {
-	case maxStreak >= minStreakKills:
-		evType = "killstreak"
-		label = fmt.Sprintf("连杀 ×%d", maxStreak)
 	case kills >= 5 && dur < 45*time.Second:
 		evType = "mass_casualty"
 		label = fmt.Sprintf("大规模伤亡 %d阵亡", kills)
+	case maxStreak >= minStreakKills:
+		evType = "killstreak"
+		label = fmt.Sprintf("连杀 ×%d", maxStreak)
 	case len(allUnits) >= 15 && kills >= minKillsEngage:
 		evType = "engagement"
 		label = fmt.Sprintf("大规模交火 %d人 %d阵亡", len(allUnits), kills)
@@ -328,9 +699,15 @@ func analyseCluster(events []decoder.GameEvent) HotspotEvent {
 	// Set a default that will be overwritten.
 	radius := 100.0
 
-	// Pad start/end so the hotspot is visible for a few seconds around the action
+	// Pad start/end so the hotspot is visible for a few seconds around the action.
+	// For killstreak events, narrow the time range to the streak's kills only.
 	startTs := addSecondsToTs(events[0].Ts, -3)
 	endTs := addSecondsToTs(events[len(events)-1].Ts, 5)
+	if evType == "killstreak" && len(topShooterTimes) > 0 {
+		startTs = addSecondsToTs(topShooterTimes[0], -3)
+		endTs = addSecondsToTs(topShooterTimes[len(topShooterTimes)-1], 5)
+		peakTs = topShooterTimes[len(topShooterTimes)-1]
+	}
 
 	h := HotspotEvent{
 		Type:    evType,

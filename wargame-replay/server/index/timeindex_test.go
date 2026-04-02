@@ -2,14 +2,21 @@ package index
 
 import (
 	"database/sql"
+	"os"
 	"testing"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const testDBPath = "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db"
+
 func TestBuildTimeIndex(t *testing.T) {
-	db, err := sql.Open("sqlite3", "../../../9_2026-01-17-11-40-00_2026-01-17-20-00-11.db?mode=ro")
+	if _, err := os.Stat(testDBPath); err != nil {
+		t.Skip("test db not found:", testDBPath)
+	}
+	db, err := sql.Open("sqlite3", testDBPath+"?mode=ro")
 	if err != nil {
-		t.Skip("test db not found")
+		t.Skip("cannot open test db:", err)
 	}
 	defer db.Close()
 

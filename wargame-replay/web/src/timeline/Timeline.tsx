@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { TransportControls } from './TransportControls';
 import { Track, TrackRenderContext } from './Track';
 import { HotspotTrack } from './HotspotTrack';
@@ -35,7 +35,6 @@ function toDbTs(ms: number): string {
  * - H key toggles between modes.
  */
 export function Timeline() {
-  const [immersive, setImmersive] = useState(false);
   const { t } = useI18n();
   const { meta, currentTs, seek } = usePlayback();
   const { cameraHistory } = useDirector();
@@ -44,19 +43,6 @@ export function Timeline() {
   const startMs = meta ? parseTs(meta.startTime) : 0;
   const endMs = meta ? parseTs(meta.endTime) : 0;
   const totalMs = endMs - startMs;
-
-  // Global H key shortcut
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === 'h' || e.key === 'H') {
-        setImmersive(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   // --- Camera track renderer ---
   const renderCamera = useCallback(
@@ -178,11 +164,10 @@ export function Timeline() {
   return (
     <div className="flex flex-col bg-zinc-950 border-t border-zinc-800 shrink-0">
       {/* Transport controls row */}
-      <TransportControls immersive={immersive} />
+      <TransportControls />
 
-      {/* Tracks area — hidden in immersive mode */}
-      {!immersive && (
-        <div className="relative" style={{ height: totalHeight }}>
+      {/* Tracks area */}
+      <div className="relative" style={{ height: totalHeight }}>
           {/* Hotspot track — custom canvas with event bars */}
           <HotspotTrack height={HOTSPOT_HEIGHT} labelWidth={LABEL_WIDTH} />
 
@@ -216,7 +201,6 @@ export function Timeline() {
           {/* Playhead overlaid on top of the tracks */}
           <Playhead trackAreaLeft={LABEL_WIDTH} />
         </div>
-      )}
     </div>
   );
 }

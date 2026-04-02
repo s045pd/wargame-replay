@@ -21,6 +21,8 @@ type Bookmark struct {
 
 // bookmarkFilePath returns the sidecar .bookmarks.json path for a game.
 func (h *Handler) bookmarkFilePath(gameID string) (string, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for _, g := range h.games {
 		if g.ID == gameID {
 			return g.FilePath + ".bookmarks.json", nil
@@ -184,8 +186,8 @@ func deduplicateSuggestions(bms []Bookmark) []Bookmark {
 	result := []Bookmark{bms[0]}
 	for _, bm := range bms[1:] {
 		last := result[len(result)-1]
-		// Compare only up to the minute portion (first 15 chars: "YYYY-MM-DD HH:M").
-		if len(bm.Ts) >= 15 && len(last.Ts) >= 15 && bm.Ts[:15] == last.Ts[:15] {
+		// Compare only up to the minute portion (first 16 chars: "YYYY-MM-DD HH:MM").
+		if len(bm.Ts) >= 16 && len(last.Ts) >= 16 && bm.Ts[:16] == last.Ts[:16] {
 			continue
 		}
 		result = append(result, bm)

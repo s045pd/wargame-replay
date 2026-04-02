@@ -14,6 +14,7 @@ const TYPE_LINE_COLORS: Record<string, string> = {
   mass_casualty: '#cc0000',
   engagement: '#ff8800',
   bombardment: '#ffee44',
+  long_range: '#00ccff',
 };
 
 const EARTH_RADIUS = 6371000; // meters
@@ -76,8 +77,8 @@ function computeActivityCircle(
     if (!idSet.has(u.id)) continue;
     if (u.lat === undefined || u.lng === undefined) continue;
 
-    // For killstreak: include the killer always, only include alive others
-    if (hotspot.type === 'killstreak' && hotspot.focusUnitId) {
+    // For killstreak/long_range: include the focus unit always, only include alive others
+    if ((hotspot.type === 'killstreak' || hotspot.type === 'long_range') && hotspot.focusUnitId) {
       if (u.id === hotspot.focusUnitId || u.alive) {
         positions.push({ lat: u.lat, lng: u.lng });
       }
@@ -134,6 +135,9 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
   const hotspotRef = useRef<HotspotEvent | null>(null);
   const unitsRef = useRef(units);
   const tsRef = useRef(currentTs);
+  /** Cache last circle parameters to avoid regenerating 64-point polygon every frame */
+  const lastCircleRef = useRef<{ lat: number; lng: number; r: number } | null>(null);
+  const lastFeatureRef = useRef<GeoJSON.Feature | null>(null);
   unitsRef.current = units;
   tsRef.current = currentTs;
 
@@ -197,10 +201,23 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
     const circle = computeActivityCircle(hs, unitsRef.current);
     if (!circle) {
       source.setData({ type: 'FeatureCollection', features: [] });
+      lastCircleRef.current = null;
       return;
     }
 
-    const feature = geoCircle(circle.centerLng, circle.centerLat, circle.radiusMeters);
+    // Only regenerate 64-point polygon if center moved >5m or radius changed >5m
+    const prev = lastCircleRef.current;
+    let feature = lastFeatureRef.current;
+    if (
+      !prev || !feature ||
+      Math.abs(circle.centerLat - prev.lat) > 0.00005 ||
+      Math.abs(circle.centerLng - prev.lng) > 0.00005 ||
+      Math.abs(circle.radiusMeters - prev.r) > 5
+    ) {
+      feature = geoCircle(circle.centerLng, circle.centerLat, circle.radiusMeters);
+      lastCircleRef.current = { lat: circle.centerLat, lng: circle.centerLng, r: circle.radiusMeters };
+      lastFeatureRef.current = feature;
+    }
     source.setData({ type: 'FeatureCollection', features: [feature] });
 
     // Update color based on hotspot type

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
-import { UnitPosition, UNIT_CLASS_LABELS, UnitClass } from '../lib/api';
+import * as mapboxgl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { UnitPosition } from '../lib/api';
 import { UnitLayer } from './UnitLayer';
 import { TrailLayer } from './TrailLayer';
 import { BaseCampLayer } from './BaseCampLayer';
@@ -10,23 +10,23 @@ import { BombingLayer } from './BombingLayer';
 import { POILayer } from './POILayer';
 import { HotspotLayer } from './HotspotLayer';
 import { HotspotActivityCircle } from './HotspotActivityCircle';
+import { SniperTracerLayer } from './SniperTracerLayer';
 import { EventToastOverlay } from './EventToastOverlay';
 import { KillLeaderboard } from './KillLeaderboard';
 import { HotspotControlPanel } from './HotspotControlPanel';
-import { MAP_STYLES, MapStyleKey } from './styles';
+import { getMapStyle, MapStyleKey } from './styles';
 import { useDirector, TargetCamera } from '../store/director';
 import { usePlayback } from '../store/playback';
 import { useHotspotFilter } from '../store/hotspotFilter';
 import { useI18n } from '../lib/i18n';
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || 'YOUR_MAPBOX_TOKEN_HERE';
-
 interface MapViewProps {
   units: UnitPosition[];
   targetCamera?: TargetCamera | null;
+  immersive?: boolean;
 }
 
-export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps) {
+export function MapView({ units, targetCamera: targetCameraProp, immersive = false }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -43,8 +43,10 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
     trailEnabled,
     selectedUnitId,
     followSelectedUnit,
+    manualFollow,
     setSelectedUnitId,
     setFollowSelectedUnit,
+    setManualFollow,
     events,
     pois,
     allHotspots,
@@ -58,15 +60,16 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
     [allHotspots, typeFilters],
   );
 
-  // Read targetCamera + activeHotspotId + focusMode from director store
-  const { targetCamera: directorCamera, activeHotspotId, autoMode, focusMode } = useDirector();
+  // Read targetCamera + activeHotspotId + focusMode + followZoom from director store
+  const { targetCamera: directorCamera, activeHotspotId, autoMode, focusMode, mode } = useDirector();
   const targetCamera = targetCameraProp ?? directorCamera;
 
   // Find the hotspot currently being tracked for the map indicator
+  // Hidden during manual follow — user is in full control
   const activeHotspot = useMemo(() => {
-    if (!autoMode || activeHotspotId === null) return null;
+    if (!autoMode || activeHotspotId === null || manualFollow) return null;
     return allHotspots.find((hs) => hs.id === activeHotspotId) ?? null;
-  }, [autoMode, activeHotspotId, allHotspots]);
+  }, [autoMode, activeHotspotId, allHotspots, manualFollow]);
 
   const currentStyleRef = useRef<MapStyleKey>(mapStyle);
 
@@ -75,16 +78,13 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
     if (!containerRef.current || initedRef.current) return;
     initedRef.current = true;
 
-    mapboxgl.accessToken = MAPBOX_TOKEN;
-
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: MAP_STYLES[mapStyle],
+      style: getMapStyle(mapStyle),
       center: [0, 20],
       zoom: 2,
-      projection: 'globe',
       preserveDrawingBuffer: true,  // needed for video capture via captureStream()
-    });
+    } as mapboxgl.MapOptions);
 
     mapRef.current = map;
 
@@ -94,59 +94,6 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
 
       // Ensure correct canvas size after container layout
       map.resize();
-
-      // Add 3D terrain if supported
-      try {
-        map.addSource('mapbox-dem', {
-          type: 'raster-dem',
-          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-          tileSize: 512,
-          maxzoom: 14,
-        });
-        map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-      } catch {
-        // Terrain not available, continue without it
-      }
-
-      // Atmosphere for globe projection
-      try {
-        map.setFog({
-          color: 'rgb(10, 10, 20)',
-          'high-color': 'rgb(20, 30, 60)',
-          'horizon-blend': 0.04,
-          'space-color': 'rgb(0, 0, 10)',
-          'star-intensity': 0.6,
-        });
-      } catch {
-        // Fog not available
-      }
-
-      // 3D building extrusions
-      try {
-        map.addLayer({
-          id: '3d-buildings',
-          source: 'composite',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 14,
-          paint: {
-            'fill-extrusion-color': '#1a1a2e',
-            'fill-extrusion-height': [
-              'interpolate', ['linear'], ['zoom'],
-              14, 0,
-              15.05, ['get', 'height'],
-            ],
-            'fill-extrusion-base': [
-              'interpolate', ['linear'], ['zoom'],
-              14, 0,
-              15.05, ['get', 'min_height'],
-            ],
-            'fill-extrusion-opacity': 0.5,
-          },
-        });
-      } catch {
-        // Building source not available in this style
-      }
 
       setMapReady(true);
 
@@ -183,8 +130,10 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
 
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
-    // No cleanup — map persists for the lifetime of this component mount.
-    // StrictMode's double-invocation is handled by initedRef guard above.
+    // Cleanup: clear poll interval on unmount (map itself persists via initedRef guard)
+    return () => {
+      clearInterval(pollInterval);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -194,63 +143,7 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
     if (currentStyleRef.current === mapStyle) return;
 
     currentStyleRef.current = mapStyle;
-    mapRef.current.setStyle(MAP_STYLES[mapStyle]);
-
-    // After style loads, restore terrain + fog
-    mapRef.current.once('style.load', () => {
-      const map = mapRef.current;
-      if (!map) return;
-      try {
-        if (!map.getSource('mapbox-dem')) {
-          map.addSource('mapbox-dem', {
-            type: 'raster-dem',
-            url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-            tileSize: 512,
-            maxzoom: 14,
-          });
-          map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-        }
-      } catch {
-        // Terrain not available for this style
-      }
-      try {
-        map.setFog({
-          color: 'rgb(10, 10, 20)',
-          'high-color': 'rgb(20, 30, 60)',
-          'horizon-blend': 0.04,
-          'space-color': 'rgb(0, 0, 10)',
-          'star-intensity': 0.6,
-        });
-      } catch {
-        // Fog not available for this style
-      }
-      // Restore 3D buildings
-      try {
-        if (!map.getLayer('3d-buildings')) {
-          map.addLayer({
-            id: '3d-buildings',
-            source: 'composite',
-            'source-layer': 'building',
-            type: 'fill-extrusion',
-            minzoom: 14,
-            paint: {
-              'fill-extrusion-color': '#1a1a2e',
-              'fill-extrusion-height': [
-                'interpolate', ['linear'], ['zoom'],
-                14, 0, 15.05, ['get', 'height'],
-              ],
-              'fill-extrusion-base': [
-                'interpolate', ['linear'], ['zoom'],
-                14, 0, 15.05, ['get', 'min_height'],
-              ],
-              'fill-extrusion-opacity': 0.5,
-            },
-          });
-        }
-      } catch {
-        // Building source not available
-      }
-    });
+    mapRef.current.setStyle(getMapStyle(mapStyle));
   }, [mapStyle, mapReady]);
 
   // Fly to director target camera (supports both point+zoom and bounds)
@@ -338,21 +231,27 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
         followActiveRef.current = true;
 
         // Initial zoom-in on first activation
+        // When director controls zoom (followZoom set), skip the initial flyTo —
+        // the targetCamera effect already handles the smooth transition to the
+        // correct zoom level, and firing a second flyTo causes conflicts.
         if (!followZoomedRef.current) {
           followZoomedRef.current = true;
-          const t = followTargetRef.current;
-          if (t) {
-            mapRef.current.flyTo({
-              center: [t.lng, t.lat],
-              zoom: 19,
-              duration: 1200,
-            });
+          const dirZoom = useDirector.getState().followZoom;
+          if (dirZoom === null) {
+            // Manual follow (user clicked) — zoom in close
+            const t = followTargetRef.current;
+            if (t) {
+              mapRef.current.flyTo({
+                center: [t.lng, t.lat],
+                zoom: 19,
+                duration: 1200,
+              });
+            }
           }
         }
 
         // Exponential-chase rAF loop
         const LERP = 0.07; // lower = smoother but more lag  (0.05–0.10 sweet spot)
-        const MIN_FOLLOW_ZOOM = 18; // minimum zoom during follow — keeps the action visible
         const ZOOM_LERP = 0.03;     // smooth zoom-in speed
         const chase = () => {
           if (!followActiveRef.current) return;
@@ -367,15 +266,26 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
           const dx = target.lng - c.lng;
           const dy = target.lat - c.lat;
 
-          // Only move if there's a meaningful delta (avoids sub-pixel jitter)
-          if (Math.abs(dx) > 1e-8 || Math.abs(dy) > 1e-8) {
+          // Only move if there's a meaningful delta (~0.1m, avoids sub-pixel jitter)
+          if (Math.abs(dx) > 1e-6 || Math.abs(dy) > 1e-6) {
             map.setCenter([c.lng + dx * LERP, c.lat + dy * LERP]);
           }
 
-          // Maintain minimum zoom — smoothly pull in if camera is too far out
-          const curZoom = map.getZoom();
-          if (curZoom < MIN_FOLLOW_ZOOM) {
-            map.setZoom(curZoom + (MIN_FOLLOW_ZOOM - curZoom) * ZOOM_LERP);
+          // Bidirectional zoom convergence toward director's target zoom.
+          // When followZoom is set (by director), smoothly converge in BOTH
+          // directions — zoom out for long_range, zoom in for killstreak.
+          // When followZoom is null (manual follow), use 18 as minimum floor only.
+          const dirZoom = useDirector.getState().followZoom;
+          if (dirZoom !== null) {
+            const curZoom = map.getZoom();
+            if (Math.abs(curZoom - dirZoom) > 0.1) {
+              map.setZoom(curZoom + (dirZoom - curZoom) * ZOOM_LERP);
+            }
+          } else {
+            const curZoom = map.getZoom();
+            if (curZoom < 18) {
+              map.setZoom(curZoom + (18 - curZoom) * ZOOM_LERP);
+            }
           }
 
           followRafRef.current = requestAnimationFrame(chase);
@@ -393,12 +303,23 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
       followActiveRef.current = false;
       cancelAnimationFrame(followRafRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [mapReady, followSelectedUnit, selectedUnitId]);
 
-  const selectedUnit = selectedUnitId !== null
-    ? units.find(u => u.id === selectedUnitId)
-    : undefined;
+  const selectedUnit = useMemo(() =>
+    selectedUnitId !== null ? units.find(u => u.id === selectedUnitId) : undefined,
+    [units, selectedUnitId],
+  );
+
+  // Memoize team scoreboard counts — avoids 4 × O(n) filters every frame
+  const teamCounts = useMemo(() => {
+    let rA = 0, rT = 0, bA = 0, bT = 0;
+    for (const u of units) {
+      if (u.team === 'red') { rT++; if (u.alive) rA++; }
+      else if (u.team === 'blue') { bT++; if (u.alive) bA++; }
+    }
+    return { redAlive: rA, redTotal: rT, blueAlive: bA, blueTotal: bT };
+  }, [units]);
 
   return (
     <div className="absolute inset-0">
@@ -428,6 +349,12 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
               currentTs={currentTs}
             />
           )}
+          {/* Sniper tracer — animated ray for long-range kills */}
+          <SniperTracerLayer
+            map={mapRef.current}
+            hotspots={filteredHotspots}
+            currentTs={currentTs}
+          />
           {/* Battlefield POIs (control points, supply, vehicles) */}
           {pois && pois.length > 0 && (
             <POILayer
@@ -435,24 +362,27 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
               pois={pois}
             />
           )}
-          {/* Debug overlay — hotspot circles on map (toggled via control panel) */}
-          {debugOverlay && filteredHotspots.length > 0 && (
-            <HotspotLayer
-              map={mapRef.current}
-              hotspots={filteredHotspots}
-              currentTs={currentTs}
-            />
+          {/* Debug overlay + control panel — director mode only, hidden in replay & immersive */}
+          {mode === 'director' && !immersive && (
+            <>
+              {debugOverlay && filteredHotspots.length > 0 && (
+                <HotspotLayer
+                  map={mapRef.current}
+                  hotspots={filteredHotspots}
+                  currentTs={currentTs}
+                />
+              )}
+              {debugOverlay && <HotspotActivityCircle map={mapRef.current} />}
+              <HotspotControlPanel />
+            </>
           )}
-          {/* Activity circle — dynamic bounding area for auto-director tracked hotspot */}
-          {debugOverlay && <HotspotActivityCircle map={mapRef.current} />}
-          {/* Hotspot control panel — debug overlay toggle + type filters */}
-          <HotspotControlPanel />
           <TrailLayer
             map={mapRef.current}
             units={units}
             trailEnabled={trailEnabled}
             events={events}
             selectedUnitId={followSelectedUnit ? selectedUnitId : null}
+            focusMode={focusMode}
           />
           <UnitLayer
             map={mapRef.current}
@@ -460,23 +390,33 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
             selectedUnitId={selectedUnitId}
             speed={speed}
             focusMode={focusMode}
+            events={events}
             onSelectUnit={(id) => {
               setSelectedUnitId(id);
               if (id === null) setFollowSelectedUnit(false);
             }}
           />
-          <EventToastOverlay events={events} units={units} />
+          {/* Event toast overlay — kill/hit feed (hidden in immersive) */}
+          {!immersive && <EventToastOverlay events={events} units={units} />}
 
-          {/* Hotspot tracking indicator — positioned below unit info panel to avoid overlap */}
-          {activeHotspot && (
-            <div className={`absolute left-4 z-10 bg-zinc-900/90 border border-amber-700/60 rounded px-3 py-1.5 text-xs font-mono backdrop-blur-sm pointer-events-none ${selectedUnit ? 'top-28' : 'top-4'}`}>
+          {/* Hotspot tracking indicator — when no unit selected, show standalone; otherwise merged below unit card */}
+          {activeHotspot && !selectedUnit && (
+            <div className={`absolute left-4 top-4 z-10 bg-zinc-900/90 border rounded px-3 py-1.5 text-xs font-mono backdrop-blur-sm pointer-events-none ${focusMode.active ? 'border-amber-500/80' : 'border-amber-700/60'}`}>
               <div className="flex items-center gap-2">
-                <span className="text-amber-400 text-[10px]">●</span>
-                <span className="text-zinc-200 font-medium">
-                  {activeHotspot.type === 'killstreak' && activeHotspot.focusName
-                    ? `${activeHotspot.focusName} ${activeHotspot.label}`
-                    : activeHotspot.label}
-                </span>
+                <span className={`text-[10px] ${focusMode.active ? 'text-amber-300 animate-pulse' : 'text-amber-400'}`}>●</span>
+                <span className="text-amber-400 font-bold">{t(activeHotspot.type as string)}</span>
+                {activeHotspot.focusName && (
+                  <span className="text-zinc-200 font-medium">{activeHotspot.focusName}</span>
+                )}
+                {activeHotspot.kills > 0 && (
+                  <span className="text-red-400">{activeHotspot.kills} 击杀</span>
+                )}
+                {activeHotspot.hits > 0 && (
+                  <span className="text-orange-400">{activeHotspot.hits} 击中</span>
+                )}
+                {activeHotspot.type === 'long_range' && activeHotspot.distance && (
+                  <span className="text-cyan-400">{activeHotspot.distance}m</span>
+                )}
                 <span className="text-zinc-500 text-[10px]">
                   {(() => {
                     const s = new Date(activeHotspot.startTs.replace(' ', 'T')).getTime();
@@ -490,33 +430,27 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
             </div>
           )}
 
-          {/* Team scoreboard - top right */}
-          {units.length > 0 && (() => {
-            const redAlive = units.filter(u => u.team === 'red' && u.alive).length;
-            const redTotal = units.filter(u => u.team === 'red').length;
-            const blueAlive = units.filter(u => u.team === 'blue' && u.alive).length;
-            const blueTotal = units.filter(u => u.team === 'blue').length;
-            return (
+          {/* Team scoreboard - top right (hidden in immersive) */}
+          {!immersive && units.length > 0 && (
               <div className="absolute top-4 right-14 z-10 bg-zinc-900/90 border border-zinc-700 rounded px-3 py-2 text-xs font-mono backdrop-blur-sm">
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
-                    <span className="text-red-400 font-bold">{redAlive}</span>
-                    <span className="text-zinc-500">/{redTotal}</span>
+                    <span className="text-red-400 font-bold">{teamCounts.redAlive}</span>
+                    <span className="text-zinc-500">/{teamCounts.redTotal}</span>
                   </div>
                   <span className="text-zinc-600">vs</span>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-cyan-500 inline-block" />
-                    <span className="text-cyan-400 font-bold">{blueAlive}</span>
-                    <span className="text-zinc-500">/{blueTotal}</span>
+                    <span className="text-cyan-400 font-bold">{teamCounts.blueAlive}</span>
+                    <span className="text-zinc-500">/{teamCounts.blueTotal}</span>
                   </div>
                 </div>
               </div>
-            );
-          })()}
+          )}
 
-          {/* Kill leaderboard — below scoreboard */}
-          <KillLeaderboard events={events} units={units} currentTs={currentTs} />
+          {/* Kill leaderboard — below scoreboard (hidden in immersive) */}
+          {!immersive && <KillLeaderboard events={events} units={units} currentTs={currentTs} />}
 
           {/* Selected unit info panel */}
           {selectedUnit && (
@@ -530,7 +464,7 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
                 />
                 <span className="font-bold">{selectedUnit.name || `#${selectedUnit.id}`}</span>
                 <span className="text-zinc-500">({selectedUnit.team})</span>
-                <span className="text-zinc-400 text-[10px]">{UNIT_CLASS_LABELS[(selectedUnit.class || 'rifle') as UnitClass]}</span>
+                <span className="text-zinc-400 text-[10px]">{t((selectedUnit.class || 'rifle') as string)}</span>
                 <button
                   className="ml-auto text-zinc-500 hover:text-zinc-200 text-xs"
                   onClick={() => {
@@ -545,7 +479,7 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
               {/* HP bar */}
               <div className="mb-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-zinc-500">HP</span>
+                  <span className="text-zinc-500 w-6">{t('hp')}</span>
                   <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-300"
@@ -558,9 +492,34 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
                   <span className="text-zinc-400 w-6 text-right">{selectedUnit.hp}</span>
                 </div>
               </div>
+              {/* Ammo bar */}
+              <div className="mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-500 w-6">{t('ammo')}</span>
+                  <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.min(100, (selectedUnit.ammo / 255) * 100)}%`,
+                        backgroundColor: selectedUnit.ammo > 100 ? '#3b82f6' : selectedUnit.ammo > 40 ? '#eab308' : '#ef4444',
+                      }}
+                    />
+                  </div>
+                  <span className="text-zinc-400 w-6 text-right">{selectedUnit.ammo}</span>
+                </div>
+              </div>
+              {/* Supply + Revival tokens inline */}
+              <div className="flex items-center gap-3 mb-1 text-zinc-400">
+                <span><span className="text-zinc-500">{t('supply')}</span> {selectedUnit.supply}</span>
+                <span><span className="text-zinc-500">{t('revival_tokens')}</span> {selectedUnit.revivalTokens}</span>
+              </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setFollowSelectedUnit(!followSelectedUnit)}
+                  onClick={() => {
+                    const next = !followSelectedUnit;
+                    setFollowSelectedUnit(next);
+                    if (next) setManualFollow(true);
+                  }}
                   className={`px-2 py-0.5 rounded text-xs transition-colors ${
                     followSelectedUnit
                       ? 'bg-cyan-700 text-white'
@@ -574,6 +533,35 @@ export function MapView({ units, targetCamera: targetCameraProp }: MapViewProps)
                   <span className="text-red-500 text-xs font-bold">{t('kia')}</span>
                 )}
               </div>
+              {/* Hotspot event details — shown below follow button when hotspot is active */}
+              {activeHotspot && (
+                <div className={`mt-2 pt-2 border-t ${focusMode.active ? 'border-amber-600/50' : 'border-zinc-700'}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] ${focusMode.active ? 'text-amber-300 animate-pulse' : 'text-amber-400'}`}>●</span>
+                    <span className="text-amber-400 font-bold">{t(activeHotspot.type as string)}</span>
+                    {activeHotspot.type === 'long_range' && activeHotspot.distance && (
+                      <span className="text-cyan-400">{activeHotspot.distance}m</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-zinc-300">
+                    {activeHotspot.kills > 0 && (
+                      <span><span className="text-red-400 font-bold">{activeHotspot.kills}</span> <span className="text-zinc-500">击杀</span></span>
+                    )}
+                    {activeHotspot.hits > 0 && (
+                      <span><span className="text-orange-400 font-bold">{activeHotspot.hits}</span> <span className="text-zinc-500">击中</span></span>
+                    )}
+                    <span className="text-zinc-500 text-[10px] ml-auto">
+                      {(() => {
+                        const s = new Date(activeHotspot.startTs.replace(' ', 'T')).getTime();
+                        const e = new Date(activeHotspot.endTs.replace(' ', 'T')).getTime();
+                        const durSec = Math.round((e - s) / 1000);
+                        if (durSec >= 60) return `${Math.floor(durSec / 60)}m${durSec % 60}s`;
+                        return `${durSec}s`;
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

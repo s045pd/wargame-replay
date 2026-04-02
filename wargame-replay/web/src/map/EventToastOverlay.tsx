@@ -57,16 +57,32 @@ export function EventToastOverlay({ events, units }: EventToastOverlayProps) {
     teamMap.current = m;
   }, [units]);
 
+  // When showHits is turned off, immediately remove existing hit toasts
+  const prevShowHitsRef = useRef(showHits);
+  useEffect(() => {
+    if (prevShowHitsRef.current && !showHits) {
+      setToasts(prev => prev.filter(t => t.event.type !== 'hit'));
+    }
+    prevShowHitsRef.current = showHits;
+  }, [showHits]);
+
   useEffect(() => {
     if (!events || events === prevEventsRef.current) return;
     prevEventsRef.current = events;
 
     // Filter: always include kills + revive + heal; include hits only if toggled on
-    const relevant = events.filter(e => {
-      if (e.type === 'kill' || e.type === 'revive' || e.type === 'heal') return true;
-      if (e.type === 'hit' && showHits) return true;
-      return false;
-    });
+    // Also deduplicate by (type, src, dst, ts) — belt-and-suspenders with backend dedup
+    const seen = new Set<string>();
+    const relevant: GameEvent[] = [];
+    for (const e of events) {
+      if (e.type === 'kill' || e.type === 'revive' || e.type === 'heal' || (e.type === 'hit' && showHits)) {
+        const key = `${e.type}:${e.src}:${e.dst ?? 0}:${e.ts ?? ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          relevant.push(e);
+        }
+      }
+    }
     if (relevant.length === 0) return;
 
     const now = Date.now();

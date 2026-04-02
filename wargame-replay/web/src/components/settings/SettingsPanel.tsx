@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useI18n } from '../../lib/i18n';
 import { MapTab } from './tabs/MapTab';
 import { ColorsTab } from './tabs/ColorsTab';
@@ -28,7 +28,14 @@ type TabKey = (typeof TABS)[number]['key'];
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('map');
+  const [slid, setSlid] = useState(false);
   const { t } = useI18n();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Trigger slide-in on mount
+  useEffect(() => {
+    requestAnimationFrame(() => setSlid(true));
+  }, []);
 
   const TAB_CONTENT: Record<TabKey, React.ComponentType> = {
     map: MapTab,
@@ -43,42 +50,57 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const ActiveTab = TAB_CONTENT[activeTab];
 
+  // Click outside the panel to close
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      onClose();
+    }
+  };
+
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      className="fixed inset-0 z-[60] pointer-events-none"
+      onClick={handleBackdropClick}
+      style={{ pointerEvents: 'auto' }}
     >
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[720px] max-w-[90vw] h-[80vh] flex flex-col">
+      {/* Semi-transparent backdrop — lets user still SEE the map */}
+      <div className={`absolute inset-0 transition-colors duration-300 ${slid ? 'bg-black/20' : 'bg-transparent'}`} />
+
+      {/* Right-side sliding drawer */}
+      <div
+        ref={panelRef}
+        className={`absolute top-0 right-0 h-full bg-zinc-900/95 backdrop-blur-md border-l border-zinc-700 shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+          slid ? 'translate-x-0' : 'translate-x-full'
+        }`}
+        style={{ width: 'min(420px, 85vw)' }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-700 shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 shrink-0">
           <h2 className="text-sm font-bold text-zinc-100 tracking-wider">{t('settings')}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-100 text-lg leading-none">\u00D7</button>
         </div>
 
-        {/* Body: sidebar + content */}
-        <div className="flex flex-1 min-h-0">
-          {/* Left sidebar tabs */}
-          <div className="w-36 border-r border-zinc-800 py-2 shrink-0 overflow-y-auto">
-            {TABS.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 transition-colors ${
-                  activeTab === tab.key
-                    ? 'bg-zinc-800 text-zinc-100 border-l-2 border-emerald-500'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border-l-2 border-transparent'
-                }`}
-              >
-                <span className="text-sm">{tab.icon}</span>
-                {t(`settings_tab_${tab.key}`)}
-              </button>
-            ))}
-          </div>
+        {/* Tab bar — horizontal scrollable strip */}
+        <div className="flex border-b border-zinc-800 shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`shrink-0 px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors border-b-2 ${
+                activeTab === tab.key
+                  ? 'text-zinc-100 border-emerald-500 bg-zinc-800/50'
+                  : 'text-zinc-500 border-transparent hover:text-zinc-300 hover:bg-zinc-800/30'
+              }`}
+            >
+              <span className="text-xs">{tab.icon}</span>
+              {t(`settings_tab_${tab.key}`)}
+            </button>
+          ))}
+        </div>
 
-          {/* Content area */}
-          <div className="flex-1 overflow-y-auto p-5">
-            <ActiveTab />
-          </div>
+        {/* Content area — scrollable */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <ActiveTab />
         </div>
       </div>
     </div>

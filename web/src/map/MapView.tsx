@@ -22,6 +22,18 @@ import { useHotspotFilter } from '../store/hotspotFilter';
 import { useVisualConfig } from '../store/visualConfig';
 import { useI18n } from '../lib/i18n';
 
+/** Dim or restore the base raster layer for focus mode — avoids full style reload */
+function applyRasterDim(map: mapboxgl.Map, dim: boolean) {
+  try {
+    const layers = map.getStyle()?.layers;
+    if (!layers) return;
+    const rasterLayer = layers.find(l => l.type === 'raster');
+    if (!rasterLayer) return;
+    map.setPaintProperty(rasterLayer.id, 'raster-brightness-max', dim ? 0.15 : 1);
+    map.setPaintProperty(rasterLayer.id, 'raster-saturation', dim ? -0.8 : 0);
+  } catch { /* style not ready yet */ }
+}
+
 interface MapViewProps {
   units: UnitPosition[];
   targetCamera?: TargetCamera | null;
@@ -65,7 +77,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
   );
 
   // Read targetCamera + activeHotspotId + focusMode + followZoom from director store
-  const { targetCamera: directorCamera, activeHotspotId, autoMode, focusMode, mode } = useDirector();
+  const { targetCamera: directorCamera, activeHotspotId, autoMode, focusMode, focusDarkMap, mode } = useDirector();
   const targetCamera = targetCameraProp ?? directorCamera;
 
   // Find the hotspot currently being tracked for the map indicator
@@ -252,13 +264,26 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     currentStyleRef.current = mapStyle;
     const map = mapRef.current;
     map.setStyle(getMapStyle(mapStyle));
-    // Re-apply globe projection after style swap (setStyle resets projection)
+    // Re-apply globe projection + focus dim after style swap (setStyle resets everything)
     map.once('style.load', () => {
       if (useVisualConfig.getState().globeProjection) {
         map.setProjection({ type: 'globe' });
       }
+      // Re-apply focus dim if active
+      const ds = useDirector.getState();
+      if (ds.focusMode.active && ds.focusDarkMap) {
+        applyRasterDim(map, true);
+      }
     });
   }, [mapStyle, mapReady, styleNonce]);
+
+  // Focus mode dark overlay — dims the base map via raster paint properties
+  // instead of swapping styles (avoids full tile reload).
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+    const shouldDim = focusMode.active && focusDarkMap;
+    applyRasterDim(mapRef.current, shouldDim);
+  }, [focusMode.active, focusDarkMap, mapReady]);
 
   // Apply tilt/pitch mode when toggled
   useEffect(() => {

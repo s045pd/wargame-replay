@@ -105,12 +105,9 @@ export function HotspotEventTabs() {
         dir.activateSlowdown(slowSpeed);
       }
 
-      // Focus mode (dark map + dimmed background)
+      // Focus mode (MapView handles raster dimming via paint properties)
       const relatedIds = (hs.units || []).filter(id => id !== hs.focusUnitId);
       dir.activateFocusMode(hs.focusUnitId!, relatedIds, pb.mapStyle);
-      if (dir.focusDarkMap && pb.mapStyle !== 'dark') {
-        pb.setMapStyle('dark');
-      }
     } else {
       // Non-personal: seek to peak and fly camera to center
       pb.seek(hs.peakTs);

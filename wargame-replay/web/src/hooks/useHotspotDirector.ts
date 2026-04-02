@@ -403,13 +403,9 @@ export function useHotspotDirector() {
         dir.activateSlowdown(slowSpeed);
       }
 
-      // Activate focus mode
-      const { mapStyle } = pb;
+      // Activate focus mode (MapView handles raster dimming via paint properties)
       const relatedIds = (best.units || []).filter((id) => id !== best.focusUnitId);
-      dir.activateFocusMode(best.focusUnitId!, relatedIds, mapStyle);
-      if (dir.focusDarkMap && mapStyle !== 'dark') {
-        pb.setMapStyle('dark');
-      }
+      dir.activateFocusMode(best.focusUnitId!, relatedIds, pb.mapStyle);
 
       dir.recordSwitch();
       return;

@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { usePlayback, savePrefs } from './playback';
-import type { MapStyleKey } from '../map/styles';
 
 export type AppMode = 'replay' | 'director';
 
@@ -163,13 +162,8 @@ export const useDirector = create<DirectorState>((set, get) => ({
   exitFocusMode: () => {
     const { focusMode: fm } = get();
     if (!fm.active) return;
-    // Restore map style before clearing state
-    if (fm.previousMapStyle) {
-      const pb = usePlayback.getState();
-      if (pb.mapStyle === 'dark' && fm.previousMapStyle !== 'dark') {
-        pb.setMapStyle(fm.previousMapStyle as MapStyleKey);
-      }
-    }
+    // MapView handles restoring raster brightness via paint properties —
+    // no style swap needed (avoids full tile reload).
     set({ focusMode: FOCUS_MODE_OFF, followZoom: null });
   },
 

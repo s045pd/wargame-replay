@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { getMapboxToken, setMapboxToken, resetMapboxToken, isEnvToken } from '../map/styles';
+import { getMapboxToken, setMapboxToken, resetMapboxToken, isEnvToken, hasMapboxToken } from '../map/styles';
+import { usePlayback } from '../store/playback';
 import { useI18n } from '../lib/i18n';
 
 interface SettingsProps {
@@ -8,30 +9,39 @@ interface SettingsProps {
 
 export function Settings({ onClose }: SettingsProps) {
   const { t } = useI18n();
+  const bumpStyleNonce = usePlayback((s) => s.bumpStyleNonce);
   const [token, setToken] = useState(getMapboxToken());
   const [saved, setSaved] = useState(false);
   const [fromEnv, setFromEnv] = useState(isEnvToken());
+  const [usingMapbox, setUsingMapbox] = useState(hasMapboxToken());
   // Track whether a localStorage override exists (Reset removes it)
   const [hasOverride, setHasOverride] = useState(() => {
     try { return localStorage.getItem('mapbox-token') !== null; } catch { return false; }
   });
 
+  const flash = useCallback(() => {
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, []);
+
   const handleSave = useCallback(() => {
     setMapboxToken(token.trim());
-    setSaved(true);
     setFromEnv(false);
     setHasOverride(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, [token]);
+    setUsingMapbox(token.trim().length > 0);
+    bumpStyleNonce(); // force map to reload with new token
+    flash();
+  }, [token, bumpStyleNonce, flash]);
 
   const handleClear = useCallback(() => {
     setToken('');
     setMapboxToken(''); // explicitly store empty → free tiles
-    setSaved(true);
     setFromEnv(false);
     setHasOverride(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, []);
+    setUsingMapbox(false);
+    bumpStyleNonce();
+    flash();
+  }, [bumpStyleNonce, flash]);
 
   const handleReset = useCallback(() => {
     resetMapboxToken(); // remove localStorage override, fall back to env var
@@ -39,9 +49,10 @@ export function Settings({ onClose }: SettingsProps) {
     setToken(effective);
     setFromEnv(isEnvToken());
     setHasOverride(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, []);
+    setUsingMapbox(effective.length > 0);
+    bumpStyleNonce();
+    flash();
+  }, [bumpStyleNonce, flash]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -60,6 +71,20 @@ export function Settings({ onClose }: SettingsProps) {
 
         {/* Body */}
         <div className="px-5 py-4 space-y-4">
+          {/* Current tile provider indicator */}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/50">
+            <span className={`w-2 h-2 rounded-full ${usingMapbox ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className="text-xs text-zinc-300">
+              {t('tile_provider')}:
+            </span>
+            <span className={`text-xs font-medium ${usingMapbox ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {usingMapbox ? 'Mapbox' : t('free_tiles')}
+            </span>
+            {!usingMapbox && (
+              <span className="text-[10px] text-zinc-500 ml-auto">CARTO / ESRI</span>
+            )}
+          </div>
+
           {/* Mapbox Token Section */}
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">

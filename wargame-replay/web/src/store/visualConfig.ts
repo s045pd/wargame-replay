@@ -31,7 +31,7 @@ export const VISUAL_DEFAULTS = {
   unitIconSize: 28,
   showUnitLabel: false,
   labelFontSize: 11,
-  deadUnitDisplay: 'fade' as const,
+  deadUnitDisplay: 'fade' as 'fade' | 'hide' | 'marker',
   deadOpacity: 0.5,
   selectionRing: true,
   defaultFollowZoom: 19,
@@ -42,7 +42,7 @@ export const VISUAL_DEFAULTS = {
   trailLength: 100,
   killLineWidth: 4,
   killLineDuration: 3,
-  killLineStyle: 'solid' as const,
+  killLineStyle: 'solid' as 'solid' | 'dashed' | 'pulse',
   hitLineWidth: 2.5,
   hitLineDuration: 2,
 
@@ -71,8 +71,13 @@ export const VISUAL_DEFAULTS = {
   focusLockDuration: 6,
 } as const;
 
+// Widen literal types from `as const` so that `set('key', value)` accepts
+// any value of the primitive base type (string | number | boolean), not only
+// the exact literal declared in VISUAL_DEFAULTS.
+type Widen<T> = T extends string ? string : T extends number ? number : T extends boolean ? boolean : T;
+
 export type VisualConfig = {
-  -readonly [K in keyof typeof VISUAL_DEFAULTS]: (typeof VISUAL_DEFAULTS)[K];
+  -readonly [K in keyof typeof VISUAL_DEFAULTS]: Widen<(typeof VISUAL_DEFAULTS)[K]>;
 };
 
 type VisualConfigStore = VisualConfig & {

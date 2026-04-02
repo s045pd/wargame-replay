@@ -92,10 +92,12 @@ jobs:
           CXX: ${{ matrix.cxx }}
         run: |
           EXT=""
+          LDFLAGS="-s -w -X main.version=${{ github.ref_name }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             EXT=".exe"
+            LDFLAGS="-s -w -H windowsgui -X main.version=${{ github.ref_name }}"
           fi
-          go build -trimpath -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+          go build -trimpath -ldflags="${LDFLAGS}" \
             -o "../wargame-replay${EXT}" .
 
       # ── macOS: create .app bundle with icon + ad-hoc signing ──

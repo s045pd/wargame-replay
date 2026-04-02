@@ -18,6 +18,7 @@ import { getMapStyle, MapStyleKey } from './styles';
 import { useDirector, TargetCamera } from '../store/director';
 import { usePlayback } from '../store/playback';
 import { useHotspotFilter } from '../store/hotspotFilter';
+import { useVisualConfig } from '../store/visualConfig';
 import { useI18n } from '../lib/i18n';
 
 interface MapViewProps {
@@ -41,6 +42,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     speed,
     mapStyle,
     styleNonce,
+    tiltMode,
     trailEnabled,
     selectedUnitId,
     followSelectedUnit,
@@ -97,7 +99,9 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       map.resize();
 
       // Enable globe projection for cinematic intro (MapLibre v4+)
-      map.setProjection({ type: 'globe' });
+      if (useVisualConfig.getState().globeProjection) {
+        map.setProjection({ type: 'globe' });
+      }
 
       setMapReady(true);
 
@@ -105,28 +109,38 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       const { meta } = usePlayback.getState();
       const bounds = meta?.bounds;
       if (bounds) {
-        const padLat = Math.max((bounds.maxLat - bounds.minLat) * 0.15, 0.0003);
-        const padLng = Math.max((bounds.maxLng - bounds.minLng) * 0.15, 0.0003);
+        const vc = useVisualConfig.getState();
+        const pad = Math.max(vc.boundsPadding / 100, 0.001);
+        const padLat = Math.max((bounds.maxLat - bounds.minLat) * pad, 0.0003);
+        const padLng = Math.max((bounds.maxLng - bounds.minLng) * pad, 0.0003);
 
-        // Cinematic fly-in: globe spins and zooms into the battlefield with tilt
-        map.fitBounds(
-          [[bounds.minLng - padLng, bounds.minLat - padLat],
-           [bounds.maxLng + padLng, bounds.maxLat + padLat]],
-          {
-            animate: true,
-            duration: 3500,
-            maxZoom: 18,
-            pitch: 50,
-            bearing: -15,
-            essential: true,
-          },
-        );
-
-        // After fly-in completes, settle to flat top-down view
-        map.once('moveend', () => {
-          map.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
-        });
-
+        if (vc.introAnimation) {
+          map.fitBounds(
+            [[bounds.minLng - padLng, bounds.minLat - padLat],
+             [bounds.maxLng + padLng, bounds.maxLat + padLat]],
+            {
+              animate: true,
+              duration: vc.introDuration * 1000,
+              maxZoom: vc.maxZoom,
+              pitch: vc.introPitch,
+              bearing: vc.introBearing,
+              essential: true,
+            },
+          );
+          map.once('moveend', () => {
+            map.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
+          });
+        } else {
+          // No animation — jump directly
+          map.fitBounds(
+            [[bounds.minLng - padLng, bounds.minLat - padLat],
+             [bounds.maxLng + padLng, bounds.maxLat + padLat]],
+            {
+              animate: false,
+              maxZoom: vc.maxZoom,
+            },
+          );
+        }
         fittedRef.current = true;
       }
     }
@@ -167,9 +181,21 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     map.setStyle(getMapStyle(mapStyle));
     // Re-apply globe projection after style swap (setStyle resets projection)
     map.once('style.load', () => {
-      map.setProjection({ type: 'globe' });
+      if (useVisualConfig.getState().globeProjection) {
+        map.setProjection({ type: 'globe' });
+      }
     });
   }, [mapStyle, mapReady, styleNonce]);
+
+  // Apply tilt/pitch mode when toggled
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+    if (tiltMode) {
+      mapRef.current.easeTo({ pitch: 60, bearing: -20, duration: 1200 });
+    } else {
+      mapRef.current.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
+    }
+  }, [tiltMode, mapReady]);
 
   // Fly to director target camera (supports both point+zoom and bounds)
   useEffect(() => {

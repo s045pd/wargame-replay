@@ -82,8 +82,8 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: getMapStyle(mapStyle),
-      center: [0, 20],
-      zoom: 2,
+      center: [30, 20],
+      zoom: 1.5,
       preserveDrawingBuffer: true,  // needed for video capture via captureStream()
     } as mapboxgl.MapOptions);
 
@@ -96,19 +96,37 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       // Ensure correct canvas size after container layout
       map.resize();
 
+      // Enable globe projection for cinematic intro (MapLibre v4+)
+      map.setProjection({ type: 'globe' });
+
       setMapReady(true);
 
-      // Use meta bounds for immediate camera positioning (no waiting for frame data)
+      // Use meta bounds for cinematic globe → battlefield fly-in
       const { meta } = usePlayback.getState();
       const bounds = meta?.bounds;
       if (bounds) {
         const padLat = Math.max((bounds.maxLat - bounds.minLat) * 0.15, 0.0003);
         const padLng = Math.max((bounds.maxLng - bounds.minLng) * 0.15, 0.0003);
+
+        // Cinematic fly-in: globe spins and zooms into the battlefield with tilt
         map.fitBounds(
           [[bounds.minLng - padLng, bounds.minLat - padLat],
            [bounds.maxLng + padLng, bounds.maxLat + padLat]],
-          { animate: false, maxZoom: 20 },
+          {
+            animate: true,
+            duration: 3500,
+            maxZoom: 18,
+            pitch: 50,
+            bearing: -15,
+            essential: true,
+          },
         );
+
+        // After fly-in completes, settle to flat top-down view
+        map.once('moveend', () => {
+          map.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
+        });
+
         fittedRef.current = true;
       }
     }
@@ -145,7 +163,12 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     if (currentStyleRef.current === mapStyle && styleNonce === 0) return;
 
     currentStyleRef.current = mapStyle;
-    mapRef.current.setStyle(getMapStyle(mapStyle));
+    const map = mapRef.current;
+    map.setStyle(getMapStyle(mapStyle));
+    // Re-apply globe projection after style swap (setStyle resets projection)
+    map.once('style.load', () => {
+      map.setProjection({ type: 'globe' });
+    });
   }, [mapStyle, mapReady, styleNonce]);
 
   // Fly to director target camera (supports both point+zoom and bounds)

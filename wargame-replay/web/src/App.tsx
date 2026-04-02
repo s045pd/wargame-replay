@@ -36,13 +36,23 @@ export default function App() {
     }
   }, [gameId, connectWs]);
 
-  // Auto-play at default speed once connected (first time only)
+  // Auto-play at default speed once connected (first time only).
+  // If intro animation is enabled, wait for it to finish before starting playback
+  // so the globe/fly-in plays out fully without replay data streaming over it.
   const autoPlayedRef = useRef(false);
   useEffect(() => {
     if (connected && !autoPlayedRef.current) {
       autoPlayedRef.current = true;
-      const { autoPlay } = useVisualConfig.getState();
-      if (autoPlay) play();
+      const vc = useVisualConfig.getState();
+      if (!vc.autoPlay) return;
+
+      if (vc.introAnimation) {
+        // Delay play() until intro animation completes
+        const delayMs = vc.introDuration * 1000 + 300; // +300ms buffer for projection switch
+        const timer = setTimeout(() => play(), delayMs);
+        return () => clearTimeout(timer);
+      }
+      play();
     }
   }, [connected, play]);
 

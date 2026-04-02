@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { GameEvent, UnitPosition } from '../lib/api';
+import { useMemo } from 'react';
+import type { UnitPosition } from '../lib/api';
 import { useI18n } from '../lib/i18n';
+import { usePlayback } from '../store/playback';
 
 interface KillLeaderboardProps {
-  events: GameEvent[];
   units: UnitPosition[];
   currentTs: string;
 }
@@ -15,98 +15,55 @@ interface LeaderEntry {
   kills: number;
 }
 
-/** A recorded kill event for accurate rewind support */
-interface KillRecord {
-  src: number;
-  dst: number;
-  ts: string;
-}
-
 const TOP_N = 5;
 
 /**
- * Real-time kill leaderboard.
- * Accumulates kill events over time.  On time-jump backwards (seek / director
- * seek-back), only discards kills that happened AFTER the new timestamp so the
- * cumulative total stays correct.
+ * Kill leaderboard backed by the pre-fetched full kill list (`allKills`).
+ * Uses binary search to count kills up to `currentTs` — accurate regardless
+ * of seek, fast-forward, or rewind.
  */
-export function KillLeaderboard({ events, units, currentTs }: KillLeaderboardProps) {
+export function KillLeaderboard({ units, currentTs }: KillLeaderboardProps) {
   const { t } = useI18n();
-  /** Full ordered list of kill events seen so far */
-  const killLogRef = useRef<KillRecord[]>([]);
-  /** Fast dedup set: "src_dst_ts" → avoid double-counting the same event */
-  const seenRef = useRef(new Set<string>());
-  const lastTsRef = useRef('');
-  const [leaders, setLeaders] = useState<LeaderEntry[]>([]);
+  const allKills = usePlayback(s => s.allKills);
 
-  // Build team/name lookup
-  const unitInfoRef = useRef(new Map<number, { name: string; team: string }>());
-  useEffect(() => {
+  // Build unit info lookup
+  const unitInfo = useMemo(() => {
     const m = new Map<number, { name: string; team: string }>();
     for (const u of units) {
       m.set(u.id, { name: u.name || `#${u.id}`, team: u.team });
     }
-    unitInfoRef.current = m;
+    return m;
   }, [units]);
 
-  useEffect(() => {
-    let dirty = false;
+  // Compute leaderboard from allKills filtered by currentTs
+  const leaders = useMemo(() => {
+    if (!allKills || allKills.length === 0 || !currentTs) return [];
 
-    // Detect time-jump backwards (seek) — trim kill log instead of clearing
-    if (currentTs && lastTsRef.current && currentTs < lastTsRef.current) {
-      const log = killLogRef.current;
-      // Find the first entry that is AFTER the new currentTs and trim from there
-      let cutIdx = log.length;
-      for (let i = log.length - 1; i >= 0; i--) {
-        if (log[i].ts <= currentTs) break;
-        cutIdx = i;
-      }
-      if (cutIdx < log.length) {
-        // Remove future entries from dedup set
-        for (let i = cutIdx; i < log.length; i++) {
-          // Rebuild dedup key — we only stored src+ts, need to remove all matching keys
-          // Since seenRef stores "src_dst_ts", and we don't have dst here, rebuild the
-          // entire seen set from the trimmed log.  Kills are rare enough that this is fine.
-        }
-        log.length = cutIdx;
-        // Rebuild seen set from remaining log entries
-        seenRef.current.clear();
-        // Note: seen set keys include dst which we don't store in killLog.
-        // That's OK — after trimming, incoming events will re-dedup correctly
-        // because events for timestamps <= currentTs will re-arrive in future frames.
-        // To avoid re-counting them, we rebuild from the log.
-        // We mark all remaining log entries as "seen" with a simpler key.
-        for (const rec of log) {
-          seenRef.current.add(`${rec.src}_${rec.dst}_${rec.ts}`);
-        }
-        dirty = true;
+    // allKills is sorted by timestamp from the server.
+    // Binary search for the last kill at or before currentTs.
+    let lo = 0;
+    let hi = allKills.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (allKills[mid].ts <= currentTs) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
       }
     }
-    lastTsRef.current = currentTs;
+    // lo = number of kills with ts <= currentTs
 
-    // Accumulate kill events from this frame
-    for (const ev of events) {
-      if (ev.type !== 'kill') continue;
-      // Dedup: same killer + same victim + same timestamp = same kill event
-      const dst = ev.dst ?? 0;
-      const key = `${ev.src}_${dst}_${ev.ts}`;
-      if (seenRef.current.has(key)) continue;
-      seenRef.current.add(key);
-      killLogRef.current.push({ src: ev.src, dst, ts: ev.ts });
-      dirty = true;
-    }
-
-    if (!dirty && killLogRef.current.length > 0) return;
-
-    // Rebuild sorted leaderboard from kill log
+    // Count kills per attacker
     const counts = new Map<number, number>();
-    for (const rec of killLogRef.current) {
-      counts.set(rec.src, (counts.get(rec.src) || 0) + 1);
+    for (let i = 0; i < lo; i++) {
+      const src = allKills[i].src;
+      counts.set(src, (counts.get(src) || 0) + 1);
     }
 
+    // Build sorted leaderboard
     const entries: LeaderEntry[] = [];
     for (const [id, kills] of counts) {
-      const info = unitInfoRef.current.get(id);
+      const info = unitInfo.get(id);
       entries.push({
         id,
         name: info?.name || `#${id}`,
@@ -115,8 +72,8 @@ export function KillLeaderboard({ events, units, currentTs }: KillLeaderboardPro
       });
     }
     entries.sort((a, b) => b.kills - a.kills);
-    setLeaders(entries.slice(0, TOP_N));
-  }, [events, currentTs]);
+    return entries.slice(0, TOP_N);
+  }, [allKills, currentTs, unitInfo]);
 
   if (leaders.length === 0) return null;
 

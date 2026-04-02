@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useHotspotFilter } from '../store/hotspotFilter';
+import { useVisualConfig } from '../store/visualConfig';
 import type { HotspotEvent } from '../lib/api';
 
 /** Pre-parsed hotspot with cached timestamps to avoid repeated Date parsing in hot loops */
@@ -12,17 +13,8 @@ interface ParsedHotspot {
   isPersonal: boolean;
 }
 
-// ─── Tuning constants ───────────────────────────────────────────────────────
-
-/** Minimum real-time milliseconds between camera switches */
-const SWITCH_COOLDOWN_MS = 6000;
-/** Random jitter added to cooldown (± this fraction) */
-const COOLDOWN_JITTER = 0.3;
-
-/** Seconds before a hotspot starts to begin pre-tracking the focus unit */
-const PRE_TRACK_SECONDS = 8;
-
-// Slowdown settings are read from the playback store (user-configurable)
+// Tuning constants are now read from useVisualConfig store at call sites.
+// Slowdown settings are read from the playback store (user-configurable).
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -50,20 +42,24 @@ function isCriticalType(hs: HotspotEvent): boolean {
 /**
  * Convert a radius in metres to an appropriate Mapbox zoom level.
  * For personal hotspots we zoom in tighter.
+ * Reads target pixel size and zoom bounds from visualConfig.
  */
 function radiusToZoom(radiusM: number, personal: boolean): number {
-  const targetPx = personal ? 200 : 350;
+  const vc = useVisualConfig.getState();
+  const targetPx = personal ? vc.personalZoomPx : vc.groupZoomPx;
   const z = 20 - Math.log2(Math.max(radiusM, 20) / (targetPx * 0.075));
-  return Math.max(14, Math.min(20, z));
+  return Math.max(vc.directorMinZoom, Math.min(vc.directorMaxZoom, z));
 }
 
 /**
  * Weighted random pick from an array.
- * Weight = score^1.5 so higher scores are favoured but not deterministic.
+ * Weight = score^power so higher scores are favoured but not deterministic.
+ * Exponent is read from visualConfig (directorScorePower).
  */
 function weightedRandomPick(items: HotspotEvent[]): HotspotEvent {
   if (items.length === 1) return items[0];
-  const weights = items.map((h) => Math.pow(h.score, 1.5));
+  const power = useVisualConfig.getState().directorScorePower;
+  const weights = items.map((h) => Math.pow(h.score, power));
   const total = weights.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < items.length; i++) {
@@ -75,7 +71,9 @@ function weightedRandomPick(items: HotspotEvent[]): HotspotEvent {
 
 /** Cooldown with random jitter so the same speed doesn't always hit the same moments */
 function jitteredCooldown(): number {
-  return SWITCH_COOLDOWN_MS * (1 + (Math.random() * 2 - 1) * COOLDOWN_JITTER);
+  const vc = useVisualConfig.getState();
+  const cooldownMs = vc.directorCooldown * 1000;
+  return cooldownMs * (1 + (Math.random() * 2 - 1) * vc.directorJitter);
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
@@ -95,6 +93,7 @@ export function useHotspotDirector() {
   // ── Reactive values (gate effect execution) ──
   const { allHotspots: hotspots, currentTs, playing, coordMode, speed } = usePlayback();
   const { autoMode } = useDirector();
+  const manualOverride = useDirector(s => s.manualOverride);
   const { typeFilters } = useHotspotFilter();
 
   // ── Pre-compute parsed timestamps + filters ──
@@ -116,7 +115,7 @@ export function useHotspotDirector() {
   const lastHotspotIdRef = useRef<number | null>(null);
   const preTrackingIdRef = useRef<number | null>(null);
   const followingUnitRef = useRef<number | null>(null);
-  const cooldownRef = useRef<number>(SWITCH_COOLDOWN_MS);
+  const cooldownRef = useRef<number>(useVisualConfig.getState().directorCooldown * 1000);
   /** Game-time lock: while curMs < this value, switching is forbidden (personal hotspot playback) */
   const lockUntilGameMsRef = useRef<number>(0);
   /** The hotspot ID we are currently locked to */
@@ -165,6 +164,24 @@ export function useHotspotDirector() {
     if (!autoMode || !playing || !currentTs) {
       fullCleanup();
       return;
+    }
+
+    // ── Manual hotspot selection from event list ──
+    // The click handler already set up store state (focus mode, camera, follow, etc.).
+    // Here we just reset internal refs so old lock state doesn't interfere,
+    // sync refs with the new store state, and yield this tick.
+    {
+      const dirSnap = useDirector.getState();
+      if (dirSnap.manualOverride) {
+        lockUntilGameMsRef.current = 0;
+        lockedHotspotIdRef.current = null;
+        preTrackingIdRef.current = null;
+        // Sync refs with store state set by click handler
+        lastHotspotIdRef.current = dirSnap.activeHotspotId;
+        followingUnitRef.current = dirSnap.focusMode.active ? dirSnap.focusMode.focusUnitId : null;
+        dirSnap.setManualOverride(false);
+        return;
+      }
     }
 
     // ── Manual follow override ──
@@ -227,7 +244,7 @@ export function useHotspotDirector() {
     let preTrackTarget: HotspotEvent | null = null;
     for (const ph of parsedHotspots) {
       if (!ph.isPersonal) continue;
-      const preTrackStart = ph.startMs - PRE_TRACK_SECONDS * 1000;
+      const preTrackStart = ph.startMs - useVisualConfig.getState().directorPreTrack * 1000;
       if (curMs >= preTrackStart && curMs < ph.startMs) {
         if (!preTrackTarget || ph.hs.score > preTrackTarget.score) {
           preTrackTarget = ph.hs;
@@ -356,7 +373,11 @@ export function useHotspotDirector() {
         if (curMs > ph.startMs) {
           pb.seek(msToTs(ph.startMs));
         }
-        lockUntilGameMsRef.current = ph.endMs;
+        // Lock until hotspot ends, or cap at focusLockDuration if enabled
+        const vcLock = useVisualConfig.getState();
+        lockUntilGameMsRef.current = vcLock.focusLockEnabled
+          ? Math.min(ph.endMs, ph.startMs + vcLock.focusLockDuration * 1000)
+          : ph.endMs;
         lockedHotspotIdRef.current = best.id;
         dir.setSwitchLocked(true);
       }
@@ -401,7 +422,10 @@ export function useHotspotDirector() {
         if (curMs > ph.startMs) {
           pb.seek(msToTs(ph.startMs));
         }
-        lockUntilGameMsRef.current = ph.endMs;
+        const vcLock = useVisualConfig.getState();
+        lockUntilGameMsRef.current = vcLock.focusLockEnabled
+          ? Math.min(ph.endMs, ph.startMs + vcLock.focusLockDuration * 1000)
+          : ph.endMs;
         lockedHotspotIdRef.current = best.id;
         dir.setSwitchLocked(true);
       }
@@ -456,5 +480,5 @@ export function useHotspotDirector() {
       dir.setTargetCamera({ x: best.centerLng, y: best.centerLat, zoom: 8 });
     }
     dir.recordSwitch();
-  }, [autoMode, playing, currentTs, parsedHotspots, coordMode, fullCleanup]);
+  }, [autoMode, manualOverride, playing, currentTs, parsedHotspots, coordMode, fullCleanup]);
 }

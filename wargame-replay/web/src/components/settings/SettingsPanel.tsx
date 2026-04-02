@@ -3,10 +3,10 @@ import { useI18n } from '../../lib/i18n';
 import { MapTab } from './tabs/MapTab';
 import { ColorsTab } from './tabs/ColorsTab';
 import { UnitsTab } from './tabs/UnitsTab';
-import { TrailsTab } from './tabs/TrailsTab';
 import { EffectsTab } from './tabs/EffectsTab';
 import { BallisticsTab } from './tabs/BallisticsTab';
 import { PlaybackTab } from './tabs/PlaybackTab';
+import { HotspotTab } from './tabs/HotspotTab';
 import { GeneralTab } from './tabs/GeneralTab';
 
 interface SettingsPanelProps {
@@ -17,10 +17,10 @@ const TABS = [
   { key: 'map',        icon: '\u{1F5FA}\uFE0F' },
   { key: 'colors',     icon: '\u{1F3A8}' },
   { key: 'units',      icon: '\u{1F464}' },
-  { key: 'trails',     icon: '\u3030\uFE0F' },
   { key: 'effects',    icon: '\u2728' },
   { key: 'ballistics', icon: '\u{1F52B}' },
   { key: 'playback',   icon: '\u23F1\uFE0F' },
+  { key: 'hotspot',    icon: '\u{1F525}' },
   { key: 'general',    icon: '\u2699\uFE0F' },
 ] as const;
 
@@ -41,10 +41,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     map: MapTab,
     colors: ColorsTab,
     units: UnitsTab,
-    trails: TrailsTab,
     effects: EffectsTab,
     ballistics: BallisticsTab,
     playback: PlaybackTab,
+    hotspot: HotspotTab,
     general: GeneralTab,
   };
 
@@ -77,7 +77,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 shrink-0">
           <h2 className="text-sm font-bold text-zinc-100 tracking-wider">{t('settings')}</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-100 text-lg leading-none">\u00D7</button>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-100 text-lg leading-none">×</button>
         </div>
 
         {/* Tab bar — horizontal scrollable strip */}

@@ -75,6 +75,7 @@ func main() {
 	r.GET("/api/games/:id/meta", handler.GetMeta)
 	r.GET("/api/games/:id/frame/:ts", handler.GetFrame)
 	r.GET("/api/games/:id/hotspots", handler.GetHotspots)
+	r.GET("/api/games/:id/kills", handler.GetKills)
 	r.GET("/api/games/:id/bookmarks", handler.ListBookmarks)
 	r.POST("/api/games/:id/bookmarks", handler.CreateBookmark)
 	r.DELETE("/api/games/:id/bookmarks/:idx", handler.DeleteBookmark)

@@ -72,6 +72,8 @@ interface DirectorState {
   focusDarkMap: boolean;
   /** Immersive mode — hides most UI for a cinematic viewing experience */
   immersive: boolean;
+  /** Set to true by manual hotspot click — tells auto-director to reset internal refs and yield */
+  manualOverride: boolean;
 
   // ── Actions ──
   setMode: (mode: AppMode) => void;
@@ -91,6 +93,7 @@ interface DirectorState {
   /** Restore original speed and clear slowdown */
   restoreSpeed: () => void;
   setSwitchLocked: (locked: boolean) => void;
+  setManualOverride: (v: boolean) => void;
   toggleFocusDarkMap: () => void;
   toggleImmersive: () => void;
 }
@@ -111,6 +114,7 @@ export const useDirector = create<DirectorState>((set, get) => ({
   switchLocked: false,
   focusDarkMap: (() => { try { const p = localStorage.getItem('wargame-prefs'); return p ? JSON.parse(p).focusDarkMap ?? true : true; } catch { return true; } })(),
   immersive: false,
+  manualOverride: false,
 
   setMode: (mode) => set({ mode }),
 
@@ -188,6 +192,7 @@ export const useDirector = create<DirectorState>((set, get) => ({
   },
 
   setSwitchLocked: (locked) => set({ switchLocked: locked }),
+  setManualOverride: (v) => set({ manualOverride: v }),
   toggleFocusDarkMap: () => set((s) => {
     const next = !s.focusDarkMap;
     savePrefs({ focusDarkMap: next });

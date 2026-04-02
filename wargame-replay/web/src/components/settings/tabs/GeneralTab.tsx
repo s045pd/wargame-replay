@@ -1,18 +1,13 @@
 import { useState, useRef } from 'react';
 import { useI18n } from '../../../lib/i18n';
-import { useHotspotFilter } from '../../../store/hotspotFilter';
 import { exportConfig, importConfig, resetToDefaults } from '../../../lib/settingsAPI';
-import { SettingToggle } from '../controls/SettingToggle';
 import { SettingSelect } from '../controls/SettingSelect';
 import { SettingGroup } from '../controls/SettingGroup';
 import { ConfirmDialog } from '../ConfirmDialog';
 import type { Locale } from '../../../lib/i18n';
 
-const HOTSPOT_TYPES = ['firefight', 'killstreak', 'mass_casualty', 'engagement', 'bombardment', 'long_range'];
-
 export function GeneralTab() {
   const { t, locale, setLocale } = useI18n();
-  const { debugOverlay, toggleDebugOverlay, typeFilters, setTypeFilter } = useHotspotFilter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [showReset, setShowReset] = useState(false);
   const [jsonText, setJsonText] = useState('');
@@ -67,22 +62,11 @@ export function GeneralTab() {
       <SettingGroup title={t('settings_language')}>
         <SettingSelect
           label={t('settings_language')}
+          description={t('settings_desc_language')}
           value={locale}
           onChange={(v) => setLocale(v as Locale)}
           options={[{ value: 'en', label: 'English' }, { value: 'zh', label: '中文' }]}
         />
-        <SettingToggle label={t('debug_overlay')} value={debugOverlay} onChange={() => toggleDebugOverlay()} />
-      </SettingGroup>
-
-      <SettingGroup title={t('hotspot_filter')}>
-        {HOTSPOT_TYPES.map((type) => (
-          <SettingToggle
-            key={type}
-            label={t(type)}
-            value={typeFilters[type as keyof typeof typeFilters]}
-            onChange={(v) => setTypeFilter(type as Parameters<typeof setTypeFilter>[0], v)}
-          />
-        ))}
       </SettingGroup>
 
       <SettingGroup title={t('settings_export')}>

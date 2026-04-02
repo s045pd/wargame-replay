@@ -7,7 +7,7 @@ export const VISUAL_DEFAULTS = {
   // Map
   globeProjection: true,
   introAnimation: true,
-  introDuration: 3.5,
+  introDuration: 10,
   introPitch: 50,
   introBearing: -15,
   maxZoom: 18,
@@ -20,8 +20,6 @@ export const VISUAL_DEFAULTS = {
   blueDeadColor: '#223366',
   killLineColor: '#ff3333',
   hitLineColor: '#ffcc00',
-  redTrailColor: '#ff4444',
-  blueTrailColor: '#00ccff',
   sniperTracerColor: '#00ccff',
   bombingColor: '#ff3c14',
   selectionColor: '#ffffff',
@@ -36,25 +34,25 @@ export const VISUAL_DEFAULTS = {
   selectionRing: true,
   defaultFollowZoom: 19,
 
-  // Trails & Lines
-  trailWidth: 2,
-  trailOpacity: 0.6,
-  trailLength: 100,
-  killLineWidth: 4,
-  killLineDuration: 3,
-  killLineStyle: 'solid' as 'solid' | 'dashed' | 'pulse',
-  hitLineWidth: 2.5,
-  hitLineDuration: 2,
+  // Attack Lines
+  killLineWidth: 3,
+  killLineDuration: 0.5,
+  killLineStyle: 'pulse' as 'solid' | 'dashed' | 'pulse',
+  hitLineWidth: 3,
+  hitLineDuration: 0.5,
 
   // Effects
-  reviveDuration: 1.1,
-  reviveIntensity: 0.8,
-  healDuration: 1.5,
-  healGlowSize: 1.5,
-  hitFlashDuration: 0.4,
-  hitFlashIntensity: 0.7,
-  deathDuration: 1.1,
-  deathScale: 1.5,
+  reviveDuration: 0.2,
+  reviveIntensity: 0.05,
+  reviveRingSize: 4,
+  healDuration: 0.3,
+  healGlowSize: 0.7,
+  hitFlashDuration: 0.1,
+  hitFlashIntensity: 0.05,
+  hitRingSize: 3,
+  deathDuration: 1.4,
+  deathScale: 0.4,
+  deathRingSize: 4,
   bombingRadius: true,
   bombingDuration: 2.5,
 
@@ -62,13 +60,29 @@ export const VISUAL_DEFAULTS = {
   sniperTracerEnabled: true,
   tracerSpeed: 1,
   tracerWidth: 2,
-  tracerTrailLength: 80,
-  tracerGlow: 0.6,
+  tracerTrailLength: 35,
+  tracerGlow: 0.2,
   tracerDuration: 1.1,
 
   // Playback additions
+  defaultSpeed: 32,
   autoPlay: true,
+  focusLockEnabled: false,   // false = lock until hotspot ends naturally; true = cap at focusLockDuration
   focusLockDuration: 6,
+
+  // Director / Hotspot
+  directorCooldown: 6,       // seconds between camera switches
+  directorJitter: 0.3,       // ±fraction of cooldown randomness
+  directorPreTrack: 8,       // seconds to pre-track before hotspot starts
+  directorScorePower: 1.5,   // exponent for weighted random pick (higher = more deterministic)
+  personalZoomPx: 290,       // target pixels for personal hotspot zoom
+  groupZoomPx: 360,          // target pixels for group hotspot zoom
+  directorMinZoom: 10.5,     // minimum zoom for director camera
+  directorMaxZoom: 19.5,     // maximum zoom for director camera
+
+  // Activity circle
+  activityCircleMin: 50,     // min radius in meters
+  activityCircleMax: 300,    // max radius in meters
 } as const;
 
 // Widen literal types from `as const` so that `set('key', value)` accepts

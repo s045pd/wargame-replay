@@ -213,5 +213,26 @@ export function HotspotLayer({ map, hotspots, currentTs }: HotspotLayerProps) {
     updateSource();
   }, [hotspots, currentTs, updateSource]);
 
+  // ---------- reactive paint updates for hotspot circle stroke color ----------
+  const hotspotCircleColor = useVisualConfig(s => s.hotspotCircleColor);
+
+  useEffect(() => {
+    try {
+      const hsColor = hotspotCircleColor || '#ffa000';
+      const r = parseInt(hsColor.slice(1, 3), 16);
+      const g = parseInt(hsColor.slice(3, 5), 16);
+      const b = parseInt(hsColor.slice(5, 7), 16);
+      const pulseStroke = `rgba(${r}, ${g}, ${b}, 0.3)`;
+      const coreStroke = `rgba(${r}, ${g}, ${b}, 0.5)`;
+
+      if (map.getLayer(HS_PULSE_LAYER)) {
+        map.setPaintProperty(HS_PULSE_LAYER, 'circle-stroke-color', pulseStroke);
+      }
+      if (map.getLayer(HS_CORE_LAYER)) {
+        map.setPaintProperty(HS_CORE_LAYER, 'circle-stroke-color', coreStroke);
+      }
+    } catch { /* ignore */ }
+  }, [map, hotspotCircleColor]);
+
   return null;
 }

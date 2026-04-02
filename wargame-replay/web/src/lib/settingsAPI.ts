@@ -43,7 +43,7 @@ export const DEFAULTS: FullConfig = {
   healEffectEnabled: true,
   hitFeedbackEnabled: true,
   deathEffectEnabled: true,
-  killstreakSlowDiv: 8,
+  killstreakSlowDiv: 4,
   longRangeSlowSpeed: 1,
   bombardSlowDiv: 4,
   focusDarkMap: true,
@@ -63,7 +63,7 @@ export const DEFAULTS: FullConfig = {
 // ── Validation ranges for numeric fields ──
 
 const RANGES: Partial<Record<keyof FullConfig, [number, number]>> = {
-  introDuration: [1, 8],
+  introDuration: [1, 15],
   introPitch: [0, 60],
   introBearing: [-180, 180],
   maxZoom: [10, 22],
@@ -72,9 +72,6 @@ const RANGES: Partial<Record<keyof FullConfig, [number, number]>> = {
   labelFontSize: [8, 16],
   deadOpacity: [0, 1],
   defaultFollowZoom: [14, 22],
-  trailWidth: [1, 6],
-  trailOpacity: [0.1, 1],
-  trailLength: [10, 500],
   killLineWidth: [1, 6],
   killLineDuration: [0.5, 10],
   hitLineWidth: [1, 6],
@@ -94,10 +91,21 @@ const RANGES: Partial<Record<keyof FullConfig, [number, number]>> = {
   tracerGlow: [0, 1],
   tracerDuration: [0.5, 5],
   focusLockDuration: [2, 15],
+  defaultSpeed: [1, 128],
   speed: [1, 128],
   killstreakSlowDiv: [0, 16],
   longRangeSlowSpeed: [0, 8],
   bombardSlowDiv: [0, 8],
+  directorCooldown: [2, 15],
+  directorJitter: [0, 0.5],
+  directorPreTrack: [2, 15],
+  directorScorePower: [0.5, 3],
+  personalZoomPx: [100, 500],
+  groupZoomPx: [150, 600],
+  directorMinZoom: [10, 18],
+  directorMaxZoom: [16, 22],
+  activityCircleMin: [20, 150],
+  activityCircleMax: [100, 600],
 };
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { GameMeta, GameEvent, UnitPosition, POIObject, HotspotEvent } from '../lib/api';
 import { GameWebSocket } from '../lib/ws';
 import { MapStyleKey } from '../map/styles';
+import { useVisualConfig } from './visualConfig';
 
 // ── LocalStorage persistence for user preferences ──
 const LS_KEY = 'wargame-prefs';
@@ -10,6 +11,7 @@ interface StoredPrefs {
   mapStyle?: string;
   speed?: number;
   trailEnabled?: boolean;
+  tiltMode?: boolean;
   killLineEnabled?: boolean;
   hitLineEnabled?: boolean;
   reviveEffectEnabled?: boolean;
@@ -59,12 +61,16 @@ interface PlaybackState {
 
   // Pre-computed full hotspot timeline (fetched once from REST API)
   allHotspots: HotspotEvent[];
+  // Pre-computed full kill event list (fetched once from REST API)
+  allKills: GameEvent[];
 
   // Map UI state
   mapStyle: MapStyleKey;
   /** Incremented to force a map style reload (e.g. after Mapbox token change) */
   styleNonce: number;
   trailEnabled: boolean;
+  /** 3D tilt/pitch mode — tilts the map for a perspective view */
+  tiltMode: boolean;
   selectedUnitId: number | null;
   followSelectedUnit: boolean;
   /** True when the user manually clicked follow — auto-director must not interfere */
@@ -95,6 +101,7 @@ interface PlaybackState {
   // Actions
   setGame: (gameId: string, meta: GameMeta) => void;
   setAllHotspots: (hotspots: HotspotEvent[]) => void;
+  setAllKills: (kills: GameEvent[]) => void;
   resetGame: () => void;
   connectWs: () => void;
   disconnectWs: () => void;
@@ -106,6 +113,7 @@ interface PlaybackState {
   /** Force the map to reload the current style (e.g. after Mapbox token changes) */
   bumpStyleNonce: () => void;
   setTrailEnabled: (enabled: boolean) => void;
+  toggleTiltMode: () => void;
   setSelectedUnitId: (id: number | null) => void;
   setFollowSelectedUnit: (follow: boolean) => void;
   setManualFollow: (manual: boolean) => void;
@@ -127,16 +135,18 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   ws: null,
   currentTs: '',
   playing: false,
-  speed: _prefs.speed ?? 64,
+  speed: _prefs.speed ?? 64, // overridden by visualConfig.defaultSpeed on connect
   coordMode: 'relative',
   units: [],
   events: [],
   hotspots: [],
   pois: [],
   allHotspots: [],
+  allKills: [],
   mapStyle: (_prefs.mapStyle as MapStyleKey) ?? 'satellite',
   styleNonce: 0,
   trailEnabled: _prefs.trailEnabled ?? true,
+  tiltMode: _prefs.tiltMode ?? false,
   selectedUnitId: null,
   followSelectedUnit: false,
   manualFollow: false,
@@ -146,7 +156,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   healEffectEnabled: _prefs.healEffectEnabled ?? true,
   hitFeedbackEnabled: _prefs.hitFeedbackEnabled ?? true,
   deathEffectEnabled: _prefs.deathEffectEnabled ?? true,
-  killstreakSlowDiv: _prefs.killstreakSlowDiv ?? 8,
+  killstreakSlowDiv: _prefs.killstreakSlowDiv ?? 4,
   longRangeSlowSpeed: _prefs.longRangeSlowSpeed ?? 1,
   bombardSlowDiv: _prefs.bombardSlowDiv ?? 4,
 
@@ -157,6 +167,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   }),
 
   setAllHotspots: (hotspots) => set({ allHotspots: hotspots }),
+  setAllKills: (kills) => set({ allKills: kills }),
 
   resetGame: () => {
     get().ws?.disconnect();
@@ -172,12 +183,16 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       hotspots: [],
       pois: [],
       allHotspots: [],
+      allKills: [],
     });
   },
 
   connectWs: () => {
     const { gameId } = get();
     if (!gameId) return;
+    // Apply default speed from settings on each new connection
+    const defaultSpd = useVisualConfig.getState().defaultSpeed || 64;
+    set({ speed: defaultSpd });
     const ws = new GameWebSocket(gameId);
     ws.onMessage((data) => {
       const msg = data as Record<string, unknown>;
@@ -237,6 +252,11 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setMapStyle: (style) => { set({ mapStyle: style }); savePrefs({ mapStyle: style }); },
   bumpStyleNonce: () => set((s) => ({ styleNonce: s.styleNonce + 1 })),
   setTrailEnabled: (enabled) => { set({ trailEnabled: enabled }); savePrefs({ trailEnabled: enabled }); },
+  toggleTiltMode: () => {
+    const next = !get().tiltMode;
+    set({ tiltMode: next });
+    savePrefs({ tiltMode: next });
+  },
   setSelectedUnitId: (id) => set(id === null ? { selectedUnitId: null, manualFollow: false } : { selectedUnitId: id }),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),
   setManualFollow: (manual) => set({ manualFollow: manual }),

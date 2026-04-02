@@ -62,6 +62,8 @@ interface PlaybackState {
 
   // Map UI state
   mapStyle: MapStyleKey;
+  /** Incremented to force a map style reload (e.g. after Mapbox token change) */
+  styleNonce: number;
   trailEnabled: boolean;
   selectedUnitId: number | null;
   followSelectedUnit: boolean;
@@ -101,6 +103,8 @@ interface PlaybackState {
   seek: (ts: string) => void;
   setSpeed: (speed: number) => void;
   setMapStyle: (style: MapStyleKey) => void;
+  /** Force the map to reload the current style (e.g. after Mapbox token changes) */
+  bumpStyleNonce: () => void;
   setTrailEnabled: (enabled: boolean) => void;
   setSelectedUnitId: (id: number | null) => void;
   setFollowSelectedUnit: (follow: boolean) => void;
@@ -131,6 +135,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   pois: [],
   allHotspots: [],
   mapStyle: (_prefs.mapStyle as MapStyleKey) ?? 'satellite',
+  styleNonce: 0,
   trailEnabled: _prefs.trailEnabled ?? true,
   selectedUnitId: null,
   followSelectedUnit: false,
@@ -230,6 +235,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   },
 
   setMapStyle: (style) => { set({ mapStyle: style }); savePrefs({ mapStyle: style }); },
+  bumpStyleNonce: () => set((s) => ({ styleNonce: s.styleNonce + 1 })),
   setTrailEnabled: (enabled) => { set({ trailEnabled: enabled }); savePrefs({ trailEnabled: enabled }); },
   setSelectedUnitId: (id) => set(id === null ? { selectedUnitId: null, manualFollow: false } : { selectedUnitId: id }),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),

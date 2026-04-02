@@ -136,10 +136,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'saved': 'Saved!',
     'mapbox_token': 'Mapbox Access Token',
     'mapbox_token_hint': 'Provide a Mapbox token to enable high-quality vector tiles, 3D terrain, and satellite imagery. Without a token, free raster tile sources are used.',
-    'mapbox_token_note': 'Token is stored locally in your browser. Reload the page after changing the token for it to take effect.',
+    'mapbox_token_note': 'Token is stored locally in your browser. The map updates instantly after saving.',
     'mapbox_token_from_env': 'Currently using token from environment variable (VITE_MAPBOX_TOKEN).',
     'mapbox_token_reset_hint': 'Remove local override and use the environment variable token again',
     'reset': 'Reset',
+    'tile_provider': 'Tile source',
+    'free_tiles': 'Free Tiles',
 
     // Misc
     'score': 'score',
@@ -285,10 +287,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'saved': '已保存!',
     'mapbox_token': 'Mapbox 访问令牌',
     'mapbox_token_hint': '提供 Mapbox 令牌以启用高质量矢量瓦片、3D 地形和卫星影像。未设置令牌时将使用免费光栅瓦片源。',
-    'mapbox_token_note': '令牌存储在浏览器本地。更改令牌后请刷新页面以生效。',
+    'mapbox_token_note': '令牌存储在浏览器本地。保存后地图会即时更新。',
     'mapbox_token_from_env': '当前使用环境变量 (VITE_MAPBOX_TOKEN) 中的令牌。',
     'mapbox_token_reset_hint': '删除本地设置，恢复使用环境变量中的令牌',
     'reset': '重置',
+    'tile_provider': '瓦片源',
+    'free_tiles': '免费瓦片',
 
     // Misc
     'score': '分数',

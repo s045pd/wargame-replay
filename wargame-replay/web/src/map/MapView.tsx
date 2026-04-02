@@ -40,6 +40,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     currentTs,
     speed,
     mapStyle,
+    styleNonce,
     trailEnabled,
     selectedUnitId,
     followSelectedUnit,
@@ -137,14 +138,15 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switch map style when mapStyle changes
+  // Switch map style when mapStyle or tile provider (token) changes
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
-    if (currentStyleRef.current === mapStyle) return;
+    // Skip if both key and nonce are unchanged (prevents redundant setStyle on mount)
+    if (currentStyleRef.current === mapStyle && styleNonce === 0) return;
 
     currentStyleRef.current = mapStyle;
     mapRef.current.setStyle(getMapStyle(mapStyle));
-  }, [mapStyle, mapReady]);
+  }, [mapStyle, mapReady, styleNonce]);
 
   // Fly to director target camera (supports both point+zoom and bounds)
   useEffect(() => {

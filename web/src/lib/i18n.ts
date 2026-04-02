@@ -284,6 +284,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'settings_desc_group_zoom_px': 'Zoom tightness for team events (bombardment, engagement). Larger = wider view.',
     'settings_desc_director_min_zoom': 'Camera won\'t zoom out further than this level.',
     'settings_desc_director_max_zoom': 'Camera won\'t zoom in closer than this level.',
+    'settings_free_max_zoom': 'Free Tile Zoom Cap',
+    'settings_desc_free_max_zoom': 'Max zoom when using free tiles (prevents "Map data not yet available"). Only applies to free tile sources.',
     'settings_desc_activity_circle_min': 'Smallest possible debug circle, even for very close-range events.',
     'settings_desc_activity_circle_max': 'Largest possible debug circle, even for very spread-out events.',
 
@@ -654,6 +656,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'settings_desc_group_zoom_px': '团队事件（炮击、交战区）的镜头远近。数值越大，视野越宽。',
     'settings_desc_director_min_zoom': '镜头最多拉远到这个级别，不会再拉远。',
     'settings_desc_director_max_zoom': '镜头最多拉近到这个级别，不会再拉近。',
+    'settings_free_max_zoom': '免费瓦片缩放上限',
+    'settings_desc_free_max_zoom': '使用免费瓦片时的最大缩放级别，防止出现"Map data not yet available"。仅对免费瓦片源生效。',
     'settings_desc_activity_circle_min': '调试圆圈的最小半径，即使事件距离很近也不会更小。',
     'settings_desc_activity_circle_max': '调试圆圈的最大半径，即使事件分布很广也不会更大。',
 

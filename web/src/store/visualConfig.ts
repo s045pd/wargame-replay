@@ -80,6 +80,9 @@ export const VISUAL_DEFAULTS = {
   directorMinZoom: 10.5,     // minimum zoom for director camera
   directorMaxZoom: 19,       // maximum zoom for director camera
 
+  // Free tile zoom cap — free providers have lower max zoom than Mapbox
+  freeMaxZoom: 16,           // max zoom when using free tiles (prevents "Map data not yet available")
+
   // Activity circle
   activityCircleMin: 50,     // min radius in meters
   activityCircleMax: 300,    // max radius in meters

@@ -15,7 +15,7 @@ import { BuildingLayer } from './BuildingLayer';
 import { EventToastOverlay } from './EventToastOverlay';
 import { KillLeaderboard } from './KillLeaderboard';
 import { HotspotControlPanel } from './HotspotControlPanel';
-import { getMapStyle, MapStyleKey } from './styles';
+import { getMapStyle, isFreeTileStyle, MapStyleKey } from './styles';
 import { useDirector, TargetCamera } from '../store/director';
 import { usePlayback } from '../store/playback';
 import { useHotspotFilter } from '../store/hotspotFilter';
@@ -390,7 +390,10 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
             // Manual follow (user clicked) — zoom in close
             const t = followTargetRef.current;
             if (t) {
-              const followZoomCfg = useVisualConfig.getState().defaultFollowZoom;
+              const vcState = useVisualConfig.getState();
+              const followZoomCfg = isFreeTileStyle(usePlayback.getState().mapStyle)
+                ? Math.min(vcState.defaultFollowZoom, vcState.freeMaxZoom)
+                : vcState.defaultFollowZoom;
               mapRef.current.flyTo({
                 center: [t.lng, t.lat],
                 zoom: followZoomCfg,
@@ -425,15 +428,20 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
           // When followZoom is set (by director), smoothly converge in BOTH
           // directions — zoom out for long_range, zoom in for killstreak.
           // When followZoom is null (manual follow), use 18 as minimum floor only.
+          // Cap zoom when using free tiles (lower max zoom than Mapbox).
           const dirZoom = useDirector.getState().followZoom;
+          const vcSnap = useVisualConfig.getState();
+          const freeZoomCap = isFreeTileStyle(usePlayback.getState().mapStyle)
+            ? vcSnap.freeMaxZoom : Infinity;
           if (dirZoom !== null) {
+            const cappedDirZoom = Math.min(dirZoom, freeZoomCap);
             const curZoom = map.getZoom();
-            if (Math.abs(curZoom - dirZoom) > 0.1) {
-              map.setZoom(curZoom + (dirZoom - curZoom) * ZOOM_LERP);
+            if (Math.abs(curZoom - cappedDirZoom) > 0.1) {
+              map.setZoom(curZoom + (cappedDirZoom - curZoom) * ZOOM_LERP);
             }
           } else {
             const curZoom = map.getZoom();
-            const followFloor = useVisualConfig.getState().defaultFollowZoom - 1;
+            const followFloor = Math.min(vcSnap.defaultFollowZoom - 1, freeZoomCap);
             if (curZoom < followFloor) {
               map.setZoom(curZoom + (followFloor - curZoom) * ZOOM_LERP);
             }

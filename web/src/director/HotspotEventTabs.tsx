@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useVisualConfig } from '../store/visualConfig';
+import { isFreeTileStyle } from '../map/styles';
 import { useI18n } from '../lib/i18n';
 import { HotspotEvent } from '../lib/api';
 
@@ -73,12 +74,15 @@ export function HotspotEventTabs() {
 
     const isPersonal = (hs.type === 'killstreak' || hs.type === 'long_range') && !!hs.focusUnitId;
 
-    // ── 2. Compute zoom from radius ──
+    // ── 2. Compute zoom from radius (capped by freeMaxZoom on free tiles) ──
+    const maxZ = isFreeTileStyle(pb.mapStyle)
+      ? Math.min(vc.directorMaxZoom, vc.freeMaxZoom)
+      : vc.directorMaxZoom;
     const targetPx = isPersonal ? vc.personalZoomPx : vc.groupZoomPx;
     const hsZoom = hs.radius > 0
-      ? Math.max(vc.directorMinZoom, Math.min(vc.directorMaxZoom,
+      ? Math.max(vc.directorMinZoom, Math.min(maxZ,
           20 - Math.log2(Math.max(hs.radius, 20) / (targetPx * 0.075))))
-      : (isPersonal ? 19 : 17);
+      : Math.min(isPersonal ? 19 : 17, maxZ);
 
     // ── 3. Set up the new hotspot ──
     if (isPersonal) {

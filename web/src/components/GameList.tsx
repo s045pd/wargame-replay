@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { fetchGames, fetchMeta, fetchHotspots, uploadFiles, UploadFileResult, GameInfo } from '../lib/api';
 import { usePlayback } from '../store/playback';
 import { useI18n } from '../lib/i18n';
-import { Settings } from './Settings';
+import { SettingsPanel } from './settings/SettingsPanel';
 
 function calcDuration(startTime: string, endTime: string): string {
   const start = new Date(startTime.replace(' ', 'T'));
@@ -309,7 +309,7 @@ export function GameList() {
           </div>
         )}
       </div>
-      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

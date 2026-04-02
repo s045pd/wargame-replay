@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { GameList } from './components/GameList';
 import { ShortcutHelp } from './components/ShortcutHelp';
+import { SettingsPanel } from './components/settings/SettingsPanel';
 import { usePlayback } from './store/playback';
 import { useDirector } from './store/director';
+import { useVisualConfig } from './store/visualConfig';
 import { useClips } from './store/clips';
 import { MapView } from './map/MapView';
 import { RelativeCanvas } from './map/RelativeCanvas';
@@ -16,13 +18,14 @@ import { useHotspotFilter } from './store/hotspotFilter';
 
 
 export default function App() {
-  const { gameId, connectWs, connected, play, pause, playing, units, coordMode, currentTs } = usePlayback();
+  const { gameId, connectWs, connected, play, pause, playing, units, coordMode, currentTs, toggleTiltMode } = usePlayback();
   const { mode, setMode, toggleAutoMode, immersive, toggleImmersive } = useDirector();
   const { toggleDebugOverlay } = useHotspotFilter();
   const { addBookmark } = useClips();
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Hotspot-driven director auto-camera (works in both modes)
   useHotspotDirector();
@@ -38,7 +41,8 @@ export default function App() {
   useEffect(() => {
     if (connected && !autoPlayedRef.current) {
       autoPlayedRef.current = true;
-      play();
+      const { autoPlay } = useVisualConfig.getState();
+      if (autoPlay) play();
     }
   }, [connected, play]);
 
@@ -147,6 +151,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleImmersive]);
 
+  // T key — toggle 3D tilt mode
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 't' || e.key === 'T') {
+        toggleTiltMode();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleTiltMode]);
+
   // ? key — toggle shortcuts help; Esc closes it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -163,6 +180,22 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showShortcuts]);
 
+  // , key — toggle settings panel; Esc closes it
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === ',') {
+        setShowSettings((prev) => !prev);
+      }
+      if (e.key === 'Escape' && showSettings) {
+        setShowSettings(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSettings]);
+
   if (!gameId) {
     return <GameList />;
   }
@@ -172,7 +205,7 @@ export default function App() {
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {!immersive && <TopBar onShowShortcuts={() => setShowShortcuts(true)} />}
+      {!immersive && <TopBar onShowShortcuts={() => setShowShortcuts(true)} onShowSettings={() => setShowSettings(true)} />}
       {!immersive && mode === 'director' ? (
         <DirectorPanel />
       ) : (
@@ -195,6 +228,9 @@ export default function App() {
       )}
       {showShortcuts && (
         <ShortcutHelp onClose={() => setShowShortcuts(false)} />
+      )}
+      {showSettings && (
+        <SettingsPanel onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

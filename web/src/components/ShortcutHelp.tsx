@@ -31,7 +31,9 @@ const SECTIONS: { titleKey: string; items: ShortcutEntry[] }[] = [
     titleKey: 'shortcut_display',
     items: [
       { key: 'H', i18nKey: 'sk_immersive' },
+      { key: 'T', i18nKey: 'sk_tilt' },
       { key: 'D', i18nKey: 'sk_debug' },
+      { key: ',', i18nKey: 'sk_settings' },
       { key: '?', i18nKey: 'sk_shortcuts' },
     ],
   },

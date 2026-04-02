@@ -6,8 +6,11 @@
 server/                                 # Go 后端 (module: wargame-replay/server)
 ├── main.go                             # 入口：flag 解析、Gin 路由注册、静态文件服务
 │   ├── var version = "dev"             #   构建时通过 -ldflags 注入版本号
-│   └── func main()                     #   启动 HTTP/WS 服务器
+│   ├── flags: -dir -host -port         #   基本服务参数
+│   ├── flags: -open -app               #   自动打开浏览器 + Chrome --app 模式
+│   └── func main()                     #   启动 HTTP/WS 服务器 + 自动开浏览器
 ├── embed.go                            # //go:embed all:static → staticFS
+├── winlog_windows.go                   # Windows 专用日志输出
 │
 ├── api/                                # REST API 处理层 (Gin handlers)
 │   ├── games.go
@@ -118,6 +121,12 @@ server/                                 # Go 后端 (module: wargame-replay/serv
 │       └── // 协议:                    #   Server→Client: {type:"frame"/"state", ...}
 │                                       #   Client→Server: {cmd:"play"/"pause"/"seek", ...}
 │
+├── browser/                            # 跨平台浏览器自动打开
+│   ├── open.go                         #   通用接口
+│   ├── open_darwin.go                  #   macOS: Chrome.app --app / open
+│   ├── open_windows.go                 #   Windows: Chrome/Edge --app / start
+│   └── open_linux.go                   #   Linux: google-chrome --app / xdg-open
+│
 ├── winres/                             # Windows 资源 (go-winres)
 │   ├── winres.json                     #   清单 + 版本信息 + 图标配置
 │   ├── icon.png                        #   256px 应用图标
@@ -156,6 +165,13 @@ web/                                    # React 前端
     │   │   ├── fetchHotspots(id)       #     GET /api/games/:id/hotspots
     │   │   ├── uploadFiles(files)      #     POST /api/upload (FormData)
     │   │   └── deleteGame(id)          #     DELETE /api/games/:id
+    │   ├── settingsAPI.ts              #   设置导入/导出/重置
+    │   │   ├── type FullConfig         #     聚合所有 store 的完整配置
+    │   │   ├── DEFAULTS                #     所有默认值
+    │   │   ├── RANGES                  #     28+ 字段的数值验证范围
+    │   │   ├── exportConfig()          #     聚合 5 个 store → JSON
+    │   │   ├── importConfig(json)      #     验证 + 分发到各 store
+    │   │   └── resetToDefaults()       #     重置所有 store 到默认值
     │   ├── ws.ts                       #   WebSocket 客户端
     │   │   └── class GameWebSocket     #     connect(), send(cmd), onMessage(fn), disconnect()
     │   │                               #     自动重连 (2s 延迟)
@@ -163,37 +179,49 @@ web/                                    # React 前端
     │   │   └── useI18n()               #     lang: zh|en, t(key), toggleLang()
     │   └── utils.ts                    #   工具函数
     │
-    ├── store/                          # Zustand 状态管理
-    │   ├── playback.ts                 #   最大 store (400+ LOC)
-    │   │   └── usePlaybackStore        #     gameId, meta, ws, currentTs, playing, speed
+    ├── store/                          # Zustand 状态管理 (5 个 store)
+    │   ├── playback.ts                 #   连接 & 回放状态
+    │   │   └── usePlayback             #     gameId, meta, ws, currentTs, playing, speed
     │   │                               #     units[], events[], hotspots[], pois[]
-    │   │                               #     mapStyle, trailEnabled, selectedUnitId
+    │   │                               #     allHotspots[], allKills[] (预加载全量)
+    │   │                               #     mapStyle, styleNonce, trailEnabled, tiltMode
+    │   │                               #     selectedUnitId, followSelectedUnit, manualFollow
     │   │                               #     killLine/hitLine/revive/heal/death 视觉效果开关
-    │   │                               #     killstreakSlowDiv, longRangeSlowSpeed 减速参数
+    │   │                               #     killstreakSlowDiv, longRangeSlowSpeed, bombardSlowDiv
     │   │                               #     LocalStorage 持久化 (wargame-prefs)
     │   ├── director.ts                 #   导播 & 镜头状态
-    │   │   └── useDirectorStore        #     mode: replay|director
+    │   │   └── useDirector             #     mode: replay|director
     │   │                               #     autoMode, targetCamera, activeHotspotId
-    │   │                               #     focusMode, slowdown, switchLocked
+    │   │                               #     focusMode{active, focusUnitId, relatedIds}
+    │   │                               #     followZoom, slowdown, switchLocked
+    │   │                               #     focusDarkMap, immersive, manualOverride
     │   │                               #     cameraHistory[] (max 500)
-    │   │                               #     focusDarkMap, immersive
+    │   ├── visualConfig.ts             #   视觉参数 (89 项可配置)
+    │   │   └── useVisualConfig         #     VISUAL_DEFAULTS: 颜色×10, 单位×7, 攻击线×5
+    │   │                               #       特效×13, 弹道×6, 导播×13, 活动圈×2
+    │   │                               #     freeMaxZoom: 免费瓦片缩放上限
+    │   │                               #     set(key, val) / setBatch() / reset()
+    │   │                               #     LocalStorage 持久化 (wargame-visual)
     │   ├── clips.ts                    #   书签 & 片段
     │   │   └── useClipsStore           #     bookmarks[], clips[], selectedClipId
     │   │                               #     load/add/delete Bookmark (REST API)
     │   │                               #     load/add/update/delete/export Clip
     │   └── hotspotFilter.ts            #   热点可见性筛选
-    │       └── useHotspotFilterStore   #     debugOverlay, typeFilters{}
+    │       └── useHotspotFilterStore   #     debugOverlay, typeFilters{6 种类型}
     │
     ├── hooks/
-    │   └── useHotspotDirector.ts       # 自动导播逻辑 (450 LOC)
+    │   └── useHotspotDirector.ts       # 自动导播逻辑 (450+ LOC)
     │       └── useHotspotDirector()    #   预追踪(8s) → 活跃热点收集 → 优先级选择
-    │                                   #   聚焦模式(暗色地图+减速+锁定)
-    │                                   #   冷却(6s ±30%抖动) → 手动跟踪覆盖
+    │                                   #   聚焦模式(地图压暗+减速+锁定)
+    │                                   #   冷却(9.5s ±30%抖动) → manualOverride 机制
+    │                                   #   effectiveMaxZoom() 免费瓦片缩放保护
     │
     ├── map/                            # 地图图层组件
-    │   ├── MapView.tsx                 #   地图容器 (400+ LOC)
+    │   ├── MapView.tsx                 #   地图容器 (500+ LOC)
     │   │   └── MapView                 #     初始化 MapLibre GL, 管理图层渲染顺序
     │   │                               #     订阅 playback store, 镜头过渡 (flyTo/fitBounds)
+    │   │                               #     聚焦模式: raster paint 压暗 (brightness/saturation)
+    │   │                               #     跟随循环: 指数平滑追踪 + freeMaxZoom 限制
     │   ├── UnitLayer.tsx               #   单位位置渲染 (GeoJSON source)
     │   ├── TrailLayer.tsx              #   移动轨迹 (LineString)
     │   ├── HotspotLayer.tsx            #   热点圆圈 + 标签 (GeoJSON)
@@ -210,7 +238,11 @@ web/                                    # React 前端
     │   ├── PlayerSearch.tsx            #   玩家搜索/筛选
     │   ├── unitIcons.ts               #   Canvas 单位图标 (rifle/mg/sniper/medic/marksman)
     │   ├── poiIcons.ts                #   Canvas POI 图标生成
-    │   └── styles.ts                  #   地图样式预设 (satellite/dark/positron)
+    │   └── styles.ts                  #   地图样式 (6 种: dark/satellite/terrain/light/osm/topo)
+    │                                  #     免费: CARTO Dark/Positron/Voyager, ESRI, OSM, OpenTopo
+    │                                  #     Mapbox: dark-v11, satellite-streets-v12, outdoors-v12
+    │                                  #     isFreeTileStyle(), getMapStyle(), getMapboxToken()
+    │                                  #     tileSize:256 + @2x (retina quality at correct zoom)
     │
     ├── timeline/                       # 时间轴 UI
     │   ├── Timeline.tsx                #   容器 (管理多轨道)
@@ -228,13 +260,31 @@ web/                                    # React 前端
     ├── clips/                          # 书签 & 片段编辑
     │   ├── BookmarkList.tsx            #   书签列表 + 自动建议
     │   ├── ClipEditor.tsx              #   片段创建/编辑
-    │   └── ExportDialog.tsx            #   片段导出对话框
+    │   └── ExportDialog.tsx            #   片段导出 (WebM 视频 / JSON 数据)
+    │                                   #     MediaRecorder: 30fps, 8Mbps, vp9/vp8
     │
     └── components/                     # 通用 UI 组件
-        ├── GameList.tsx                #   游戏选择器 + 文件上传区
+        ├── GameList.tsx                #   游戏选择器 + 文件上传区（拖拽上传）
         ├── TopBar.tsx                  #   标题栏 + 设置入口
-        ├── Settings.tsx                #   偏好设置面板
-        └── ShortcutHelp.tsx            #   键盘快捷键帮助
+        ├── ShortcutHelp.tsx            #   键盘快捷键帮助
+        └── settings/                   #   右侧滑出设置面板
+            ├── Settings.tsx            #     面板容器 (8 页 Tab)
+            ├── tabs/                   #     8 个设置页
+            │   ├── MapTab.tsx          #       地图源网格选择器 + Mapbox token + 缩放
+            │   ├── ColorsTab.tsx       #       10 种颜色配置
+            │   ├── UnitsTab.tsx        #       图标大小/标签/阵亡显示
+            │   ├── EffectsTab.tsx      #       复活/治疗/击中/死亡动画参数
+            │   ├── BallisticsTab.tsx   #       狙击弹道特效参数
+            │   ├── PlaybackTab.tsx     #       效果开关 + 热点降速设置
+            │   ├── HotspotTab.tsx      #       导播参数 + 镜头缩放 + 活动圈
+            │   └── GeneralTab.tsx      #       语言/JSON 导入导出/重置
+            └── controls/               #     6 种可复用控件
+                ├── SettingToggle.tsx    #       开关
+                ├── SettingSlider.tsx    #       滑条
+                ├── SettingInput.tsx     #       输入框
+                ├── SettingSelect.tsx    #       下拉选择
+                ├── SettingColor.tsx     #       颜色选择器
+                └── SettingGroup.tsx     #       分组容器
 
 
 assets/                                 # 图标资源
@@ -277,15 +327,16 @@ assets/                                 # 图标资源
                    │                │
             ┌──────▼────────────────▼───────┐
             │         React 前端              │
-            │  Zustand stores (4个)          │
+            │  Zustand stores (5个)          │
             │  ┌─────────────────────────┐  │
             │  │ playback: 帧数据+播放状态  │  │
             │  │ director: 镜头+聚焦模式   │  │
+            │  │ visualConfig: 89项视觉参数│  │
             │  │ clips: 书签+片段         │  │
             │  │ hotspotFilter: 筛选      │  │
             │  └─────────────────────────┘  │
             │  MapLibre GL (15 个图层)       │
-            │  时间轴 + 导播面板              │
+            │  时间轴 + 导播面板 + 8页设置    │
             └───────────────────────────────┘
 ```
 
@@ -330,6 +381,12 @@ DetectHotspotEvents():
 
 ```
 useHotspotDirector():
+  // manualOverride 检查 (热点列表点击触发)
+  if manualOverride:
+    重置所有内部 ref (lockUntil, lockedHotspotId, preTrackingId)
+    从 store 同步状态 → 让出一帧
+    return
+
   if 锁定个人热点中:
     if 当前时间 < 锁定结束时间 → 保持聚焦
     else → 退出聚焦模式
@@ -344,10 +401,12 @@ useHotspotDirector():
 
     if 个人热点:
       seek 到热点开始时间
-      激活暗色地图 + 减速
-      设置游戏时间锁定
+      激活地图压暗 (raster paint: brightness-max=0.15, saturation=-0.8)
+      减速 + 设置游戏时间锁定
 
-    冷却: 6s 实时 (±30% 抖动)
+    缩放限制: effectiveMaxZoom() 自动感知免费瓦片上限
+
+    冷却: 9.5s 实时 (±30% 抖动)
     关键热点可绕过冷却
 
     手动跟踪 > 导播控制 (绝对优先)
@@ -407,6 +466,11 @@ CR = 0x100E (4110)
 - **坐标检测**: 自动尝试 5 种启发式，优先 `.txt` 文件 → WGS84 → 相对坐标
 - **缓存策略**: 热点缓存按 `.db` 文件 mtime 失效；帧缓存 100MB LRU 内存限制
 - **WebSocket 帧率**: 低速(≤16x) 每游戏秒 1 帧；高速(>16x) 上限 16fps
+- **地图源**: 6 种免费瓦片 + 3 种 Mapbox 高清；Mapbox 使用 Static Tiles API (tileSize:256+@2x)
+- **聚焦模式**: 通过 raster paint 属性 (brightness-max, saturation) 压暗地图，不切换样式避免缓存丢失
+- **免费瓦片保护**: `freeMaxZoom` (默认 16) 限制导播/跟随/点击缩放，防止 "Map data not yet available"
+- **设置持久化**: `wargame-visual` (89 项视觉参数), `wargame-prefs` (回放偏好), `mapbox-token` (地图令牌)
+- **自动打开浏览器**: 启动时自动检测 Chrome/Edge，优先 `--app` 模式（无地址栏）
 
 ## CI/CD
 

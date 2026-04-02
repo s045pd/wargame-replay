@@ -157,7 +157,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   hitFeedbackEnabled: _prefs.hitFeedbackEnabled ?? true,
   deathEffectEnabled: _prefs.deathEffectEnabled ?? true,
   killstreakSlowDiv: _prefs.killstreakSlowDiv ?? 4,
-  longRangeSlowSpeed: _prefs.longRangeSlowSpeed ?? 1,
+  longRangeSlowSpeed: _prefs.longRangeSlowSpeed ?? 0,
   bombardSlowDiv: _prefs.bombardSlowDiv ?? 4,
 
   setGame: (gameId, meta) => set({

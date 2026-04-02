@@ -7,9 +7,9 @@ export const VISUAL_DEFAULTS = {
   // Map
   globeProjection: true,
   introAnimation: true,
-  introDuration: 10,
-  introPitch: 50,
-  introBearing: -15,
+  introDuration: 8,
+  introPitch: 60,
+  introBearing: 180,
   maxZoom: 18,
   boundsPadding: 15,
 
@@ -30,7 +30,7 @@ export const VISUAL_DEFAULTS = {
   showUnitLabel: false,
   labelFontSize: 11,
   deadUnitDisplay: 'fade' as 'fade' | 'hide' | 'marker',
-  deadOpacity: 0.5,
+  deadOpacity: 0.85,
   selectionRing: true,
   defaultFollowZoom: 19,
 
@@ -46,13 +46,13 @@ export const VISUAL_DEFAULTS = {
   reviveIntensity: 0.05,
   reviveRingSize: 4,
   healDuration: 0.3,
-  healGlowSize: 0.7,
+  healGlowSize: 0.6,
   hitFlashDuration: 0.1,
   hitFlashIntensity: 0.05,
-  hitRingSize: 3,
-  deathDuration: 1.4,
-  deathScale: 0.4,
-  deathRingSize: 4,
+  hitRingSize: 2,
+  deathDuration: 1.1,
+  deathScale: 0.3,
+  deathRingSize: 3,
   bombingRadius: true,
   bombingDuration: 2.5,
 
@@ -65,20 +65,20 @@ export const VISUAL_DEFAULTS = {
   tracerDuration: 1.1,
 
   // Playback additions
-  defaultSpeed: 32,
+  defaultSpeed: 64,
   autoPlay: true,
   focusLockEnabled: false,   // false = lock until hotspot ends naturally; true = cap at focusLockDuration
   focusLockDuration: 6,
 
   // Director / Hotspot
-  directorCooldown: 6,       // seconds between camera switches
+  directorCooldown: 9.5,     // seconds between camera switches
   directorJitter: 0.3,       // ±fraction of cooldown randomness
   directorPreTrack: 8,       // seconds to pre-track before hotspot starts
   directorScorePower: 1.5,   // exponent for weighted random pick (higher = more deterministic)
-  personalZoomPx: 290,       // target pixels for personal hotspot zoom
-  groupZoomPx: 360,          // target pixels for group hotspot zoom
+  personalZoomPx: 500,       // target pixels for personal hotspot zoom
+  groupZoomPx: 600,          // target pixels for group hotspot zoom
   directorMinZoom: 10.5,     // minimum zoom for director camera
-  directorMaxZoom: 19.5,     // maximum zoom for director camera
+  directorMaxZoom: 19,       // maximum zoom for director camera
 
   // Activity circle
   activityCircleMin: 50,     // min radius in meters

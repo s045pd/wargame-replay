@@ -44,7 +44,7 @@ export const DEFAULTS: FullConfig = {
   hitFeedbackEnabled: true,
   deathEffectEnabled: true,
   killstreakSlowDiv: 4,
-  longRangeSlowSpeed: 1,
+  longRangeSlowSpeed: 0,
   bombardSlowDiv: 4,
   focusDarkMap: true,
   locale: 'zh',

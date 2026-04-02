@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 	"wargame-replay/server/api"
+	"wargame-replay/server/browser"
 	"wargame-replay/server/ws"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +58,8 @@ func main() {
 	dir := flag.String("dir", ".", "Directory containing .db files")
 	host := flag.String("host", "127.0.0.1", "Listen host")
 	port := flag.Int("port", 8080, "Listen port")
+	openBrowser := flag.Bool("open", true, "auto-open browser on startup")
+	appMode := flag.Bool("app", true, "prefer Chrome/Edge --app mode (no URL bar)")
 	flag.Parse()
 
 	handler, err := api.NewHandler(*dir)
@@ -90,5 +94,26 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
 	log.Printf("Wargame Replay %s — starting on %s, scanning %s", version, addr, *dir)
+
+	go func() {
+		for i := 0; i < 30; i++ {
+			resp, err := http.Get("http://" + addr + "/api/health")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					if *openBrowser {
+						if *appMode {
+							_ = browser.Open("http://" + addr)
+						} else {
+							_ = browser.OpenDefault("http://" + addr)
+						}
+					}
+					return
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}()
+
 	log.Fatal(r.Run(addr))
 }

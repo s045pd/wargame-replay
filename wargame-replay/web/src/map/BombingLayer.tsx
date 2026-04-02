@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type * as mapboxgl from 'maplibre-gl';
 import { BombingEvent } from '../lib/api';
+import { useVisualConfig } from '../store/visualConfig';
 
 interface BombingLayerProps {
   map: mapboxgl.Map;
@@ -18,9 +19,9 @@ const FLASH_LAYER = 'bombing-flash-layer';
 
 // How long (in ms) a bombing marker stays visible after its timestamp
 const DISPLAY_DURATION_MS = 120_000; // 2 minutes
-// Shockwave animation duration (real-time ms)
-const SHOCKWAVE_DURATION_MS = 2500;
-/** Delay before second ring starts (must be < SHOCKWAVE_DURATION_MS) */
+// Fallback shockwave animation duration (real-time ms) — overridden by visualConfig
+const DEFAULT_SHOCKWAVE_DURATION_MS = 2500;
+/** Delay before second ring starts (must be < shockwave duration) */
 const RING2_DELAY_MS = 200;
 // Initial flash duration
 const FLASH_DURATION_MS = 600;
@@ -30,14 +31,24 @@ function eventLabel(ev: BombingEvent): string {
   return '轰炸';  // bombing
 }
 
+/** Convert hex (#rrggbb) to rgba string */
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function eventColor(ev: BombingEvent): string {
   if (ev.subType === 1) return 'rgba(50, 200, 255, 0.6)';  // airdrop = cyan
-  return 'rgba(255, 60, 20, 0.7)';  // bombing = red-orange
+  const bc = useVisualConfig.getState().bombingColor || '#ff3c14';
+  return hexToRgba(bc, 0.7);
 }
 
 function eventBlastColor(ev: BombingEvent): string {
   if (ev.subType === 1) return 'rgba(50, 200, 255, 0.15)';
-  return 'rgba(255, 60, 20, 0.18)';
+  const bc = useVisualConfig.getState().bombingColor || '#ff3c14';
+  return hexToRgba(bc, 0.18);
 }
 
 /**
@@ -245,8 +256,9 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
     }
 
     // Purge old entries
+    const shockwaveDurMs = (useVisualConfig.getState().bombingDuration * 1000) || DEFAULT_SHOCKWAVE_DURATION_MS;
     for (const [key, startTime] of shockwaveStartRef.current) {
-      if (now - startTime > SHOCKWAVE_DURATION_MS + 500) {
+      if (now - startTime > shockwaveDurMs + 500) {
         shockwaveStartRef.current.delete(key);
       }
     }
@@ -258,22 +270,25 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
       const animateShockwave = () => {
         if (!isAnimatingRef.current) return;
         const animNow = performance.now();
+        const vc = useVisualConfig.getState();
+        const swDurMs = (vc.bombingDuration * 1000) || DEFAULT_SHOCKWAVE_DURATION_MS;
+        const swColor = vc.bombingColor || '#ff3c14';
         const features: GeoJSON.Feature[] = [];
         let anyActive = false;
 
         for (const [key, startTime] of shockwaveStartRef.current) {
           const elapsed = animNow - startTime;
           // Must cover the delayed second ring (starts at RING2_DELAY_MS)
-          if (elapsed > SHOCKWAVE_DURATION_MS + RING2_DELAY_MS) continue;
+          if (elapsed > swDurMs + RING2_DELAY_MS) continue;
           anyActive = true;
 
           const [latStr, lngStr] = key.split('_');
           const lat = parseFloat(latStr);
           const lng = parseFloat(lngStr);
 
-          // Expanding ring (first ring — only during SHOCKWAVE_DURATION_MS)
-          if (elapsed <= SHOCKWAVE_DURATION_MS) {
-            const t = elapsed / SHOCKWAVE_DURATION_MS;
+          // Expanding ring (first ring — only during shockwave duration)
+          if (elapsed <= swDurMs) {
+            const t = elapsed / swDurMs;
             const ringRadius = 10 + 60 * Math.pow(t, 0.5); // fast start, decelerates
             const ringOpacity = 0.8 * (1 - t);
             const strokeWidth = 3 * (1 - t * 0.7);
@@ -284,7 +299,7 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
               properties: {
                 radius: ringRadius,
                 strokeWidth,
-                strokeColor: '#ff6622',
+                strokeColor: swColor,
                 strokeOpacity: ringOpacity,
               isFlash: 0,
               flashRadius: 0,
@@ -295,7 +310,7 @@ export function BombingLayer({ map, bombingEvents, currentTs }: BombingLayerProp
 
           // Second shockwave ring (delayed)
           if (elapsed > RING2_DELAY_MS) {
-            const t2 = (elapsed - RING2_DELAY_MS) / SHOCKWAVE_DURATION_MS;
+            const t2 = (elapsed - RING2_DELAY_MS) / swDurMs;
             if (t2 < 1) {
               features.push({
                 type: 'Feature',

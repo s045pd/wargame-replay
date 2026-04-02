@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { HotspotEvent, UnitPosition } from '../lib/api';
+import { useVisualConfig } from '../store/visualConfig';
 
 const SOURCE_ID = 'hotspot-activity-circle';
 const FILL_LAYER = 'hotspot-activity-fill';
@@ -151,6 +152,9 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
   const addSourceAndLayers = useCallback(() => {
     if (map.getSource(SOURCE_ID)) return;
 
+    const vc = useVisualConfig.getState();
+    const hsColor = vc.hotspotCircleColor || '#ffa000';
+
     map.addSource(SOURCE_ID, {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
@@ -161,7 +165,7 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
       type: 'fill',
       source: SOURCE_ID,
       paint: {
-        'fill-color': '#ff9900',
+        'fill-color': hsColor,
         'fill-opacity': 0.08,
       },
     });
@@ -171,7 +175,7 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
       type: 'line',
       source: SOURCE_ID,
       paint: {
-        'line-color': '#ff9900',
+        'line-color': hsColor,
         'line-width': 1.5,
         'line-opacity': 0.6,
         'line-dasharray': [4, 3],
@@ -220,8 +224,9 @@ export function HotspotActivityCircle({ map }: HotspotActivityCircleProps) {
     }
     source.setData({ type: 'FeatureCollection', features: [feature] });
 
-    // Update color based on hotspot type
-    const lineColor = TYPE_LINE_COLORS[hs.type] || '#ff9900';
+    // Update color based on hotspot type (fall back to visualConfig hotspotCircleColor)
+    const vcFallback = useVisualConfig.getState().hotspotCircleColor || '#ffa000';
+    const lineColor = TYPE_LINE_COLORS[hs.type] || vcFallback;
     try {
       map.setPaintProperty(LINE_LAYER, 'line-color', lineColor);
       map.setPaintProperty(FILL_LAYER, 'fill-color', lineColor);

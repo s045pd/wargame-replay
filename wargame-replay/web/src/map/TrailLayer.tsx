@@ -4,6 +4,7 @@ import type { FilterSpecification } from 'maplibre-gl';
 import { UnitPosition, GameEvent } from '../lib/api';
 import type { FocusMode } from '../store/director';
 import { usePlayback } from '../store/playback';
+import { useVisualConfig } from '../store/visualConfig';
 
 interface TrailLayerProps {
   map: mapboxgl.Map;
@@ -30,17 +31,22 @@ const ALL_LAYERS = [
   HIT_GLOW_LAYER, HIT_CORE_LAYER,
 ] as const;
 
-// ---------- colours ----------
+// ---------- colours (defaults – overridden at runtime from visualConfig) ----------
 const KILL_COLOR = '#ff3333';
-const KILL_GLOW_COLOR = 'rgba(255, 50, 50, 0.5)';
 const HIT_COLOR = '#ffcc00';
-const HIT_GLOW_COLOR = 'rgba(255, 200, 0, 0.4)';
 const FOLLOW_COLOR = '#00ff66';
 const FOLLOW_GLOW_COLOR = 'rgba(0, 255, 100, 0.55)';
 
 // ---------- animation config ----------
-const TRACER_DURATION_MS = 350;
 const TRACER_LENGTH = 0.2;
+
+/** Convert hex color to rgba string */
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 interface TracerEntry {
   srcLng: number;
@@ -68,12 +74,13 @@ function lerpCoord(
 function buildTracerCoords(
   entry: TracerEntry,
   now: number,
+  durationMs: number,
 ): { coords: [number, number][]; opacity: number } | null {
   const elapsed = now - entry.startTime;
-  if (elapsed < 0 || elapsed > TRACER_DURATION_MS) return null;
+  if (elapsed < 0 || elapsed > durationMs) return null;
 
   const { srcLng, srcLat, dstLng, dstLat } = entry;
-  const t = elapsed / TRACER_DURATION_MS;
+  const t = elapsed / durationMs;
 
   const headT = Math.min(t * (1 + TRACER_LENGTH), 1 + TRACER_LENGTH);
   const tailT = Math.max(0, headT - TRACER_LENGTH);
@@ -92,11 +99,12 @@ function buildTracerCoords(
 function buildAnimatedGeoJson(
   tracers: TracerEntry[],
   now: number,
+  durationMs: number,
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
 
   for (const tr of tracers) {
-    const result = buildTracerCoords(tr, now);
+    const result = buildTracerCoords(tr, now, durationMs);
     if (!result) continue;
 
     features.push({
@@ -128,6 +136,14 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
     function addLayers() {
       if (map.getSource(ATTACK_SOURCE_ID)) return;
 
+      const vc = useVisualConfig.getState();
+      const killColor = vc.killLineColor || KILL_COLOR;
+      const killGlowColor = hexToRgba(killColor, 0.5);
+      const hitColor = vc.hitLineColor || HIT_COLOR;
+      const hitGlowColor = hexToRgba(hitColor, 0.4);
+      const killW = vc.killLineWidth;
+      const hitW = vc.hitLineWidth;
+
       map.addSource(ATTACK_SOURCE_ID, {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -147,8 +163,8 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         filter: killFilter,
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': KILL_GLOW_COLOR,
-          'line-width': 18,
+          'line-color': killGlowColor,
+          'line-width': killW * 4.5,
           'line-opacity': ['get', 'opacity'],
           'line-blur': 8,
         },
@@ -162,8 +178,8 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         filter: killFilter,
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': KILL_COLOR,
-          'line-width': 4,
+          'line-color': killColor,
+          'line-width': killW,
           'line-opacity': ['get', 'opacity'],
         },
       });
@@ -176,8 +192,8 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         filter: hitFilter,
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': HIT_GLOW_COLOR,
-          'line-width': 10,
+          'line-color': hitGlowColor,
+          'line-width': hitW * 4,
           'line-opacity': ['get', 'opacity'],
           'line-blur': 5,
         },
@@ -191,8 +207,8 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         filter: hitFilter,
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': HIT_COLOR,
-          'line-width': 2.5,
+          'line-color': hitColor,
+          'line-width': hitW,
           'line-opacity': ['get', 'opacity'],
         },
       });
@@ -318,12 +334,15 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         if (!isAnimatingRef.current) return;
 
         const now = performance.now();
+        // Read duration from visualConfig (kill/hit use killLineDuration as base)
+        const vc = useVisualConfig.getState();
+        const tracerDurationMs = vc.killLineDuration * 1000;
 
         // Prune expired tracers in-place (avoids allocating new array every frame)
         const tracers = tracersRef.current;
         let writeIdx = 0;
         for (let i = 0; i < tracers.length; i++) {
-          if ((now - tracers[i].startTime) < TRACER_DURATION_MS) {
+          if ((now - tracers[i].startTime) < tracerDurationMs) {
             tracers[writeIdx++] = tracers[i];
           }
         }
@@ -332,7 +351,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         const source = map.getSource(ATTACK_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
         if (source) {
           if (tracersRef.current.length > 0) {
-            source.setData(buildAnimatedGeoJson(tracersRef.current, now));
+            source.setData(buildAnimatedGeoJson(tracersRef.current, now, tracerDurationMs));
             rafRef.current = requestAnimationFrame(animate);
           } else {
             source.setData({ type: 'FeatureCollection', features: [] });

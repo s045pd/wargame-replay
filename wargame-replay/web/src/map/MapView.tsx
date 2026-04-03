@@ -301,10 +301,12 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
 
     if (targetCamera.bounds) {
       // Use fitBounds for dynamic area-based zoom
+      const boundsMaxZoom = isFreeTileStyle(usePlayback.getState().mapStyle)
+        ? Math.min(18, useVisualConfig.getState().freeMaxZoom) : 18;
       mapRef.current.fitBounds(targetCamera.bounds, {
         padding: 60,
         duration: 1500,
-        maxZoom: 18,
+        maxZoom: boundsMaxZoom,
         minZoom: 15,
       });
     } else if (targetCamera.lng !== undefined && targetCamera.lat !== undefined) {

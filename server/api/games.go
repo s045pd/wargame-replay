@@ -6,15 +6,17 @@ import (
 	"sync"
 	"wargame-replay/server/game"
 	"wargame-replay/server/scanner"
+	"wargame-replay/server/video"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	mu       sync.RWMutex
-	games    []scanner.GameInfo
-	services map[string]*game.Service // gameID → service
-	dataDir  string
+	mu           sync.RWMutex
+	games        []scanner.GameInfo
+	services     map[string]*game.Service // gameID → service
+	dataDir      string
+	videoScanner *video.Scanner // nil or disabled when -videodir not set
 }
 
 func NewHandler(dataDir string) (*Handler, error) {
@@ -27,6 +29,31 @@ func NewHandler(dataDir string) (*Handler, error) {
 		services: make(map[string]*game.Service),
 		dataDir:  dataDir,
 	}, nil
+}
+
+// SetVideoScanner wires the video feature into the handler.  Call once after
+// NewHandler but before registering routes.  Passing a disabled scanner (empty
+// root dir) is equivalent to calling with nil.
+func (h *Handler) SetVideoScanner(s *video.Scanner) {
+	h.videoScanner = s
+}
+
+// VideoScanner returns the configured video scanner (may be nil).
+func (h *Handler) VideoScanner() *video.Scanner {
+	return h.videoScanner
+}
+
+// findGameInfo looks up a game by id without taking a write lock.
+// Returns ok=false if not found.
+func (h *Handler) findGameInfo(gameID string) (scanner.GameInfo, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, g := range h.games {
+		if g.ID == gameID {
+			return g, true
+		}
+	}
+	return scanner.GameInfo{}, false
 }
 
 func (h *Handler) ListGames(c *gin.Context) {

@@ -6,9 +6,12 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 	"wargame-replay/server/api"
 	"wargame-replay/server/browser"
+	"wargame-replay/server/video"
 	"wargame-replay/server/ws"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +59,7 @@ func serveStatic(r *gin.Engine) {
 
 func main() {
 	dir := flag.String("dir", ".", "Directory containing .db files")
+	videoDir := flag.String("videodir", "", "Root directory for video sync (empty → {dir}/videos if present)")
 	host := flag.String("host", "127.0.0.1", "Listen host")
 	port := flag.Int("port", 8080, "Listen port")
 	openBrowser := flag.Bool("open", true, "auto-open browser on startup")
@@ -66,6 +70,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize handler: %v", err)
 	}
+
+	// Video sync feature: if -videodir was provided use it; otherwise auto-detect
+	// {dir}/videos.  Empty root (or non-existent directory) leaves the feature
+	// disabled and the frontend will hide its UI via GET /api/videos/status.
+	effectiveVideoDir := *videoDir
+	if effectiveVideoDir == "" {
+		candidate := filepath.Join(*dir, "videos")
+		if st, statErr := os.Stat(candidate); statErr == nil && st.IsDir() {
+			effectiveVideoDir = candidate
+		}
+	}
+	videoScanner := video.NewScanner(effectiveVideoDir)
+	if videoScanner.Enabled() {
+		if err := videoScanner.Scan(); err != nil {
+			log.Printf("video: initial scan failed: %v", err)
+		}
+	} else {
+		log.Printf("video: feature disabled (no -videodir configured)")
+	}
+	handler.SetVideoScanner(videoScanner)
 
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) {
@@ -89,6 +113,16 @@ func main() {
 	r.PUT("/api/games/:id/unitclasses", handler.SetUnitClasses)
 	r.POST("/api/upload", handler.UploadGame)
 	r.DELETE("/api/games/:id", handler.DeleteGame)
+	// Video sync routes (some return empty payloads when the feature is
+	// disabled, so the frontend can safely call them unconditionally).
+	r.GET("/api/videos/status", handler.GetVideoStatus)
+	r.POST("/api/videos/rescan", handler.PostVideoRescan)
+	r.GET("/api/games/:id/videos/candidates", handler.GetVideoCandidates)
+	r.GET("/api/games/:id/videos", handler.GetVideoGroups)
+	r.POST("/api/games/:id/videos", handler.PostVideoGroup)
+	r.PUT("/api/games/:id/videos/:groupId", handler.PutVideoGroup)
+	r.DELETE("/api/games/:id/videos/:groupId", handler.DeleteVideoGroup)
+	r.GET("/api/video-stream/*relPath", handler.StreamVideo)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	serveStatic(r)

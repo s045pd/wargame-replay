@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"wargame-replay/server/scanner"
+	"wargame-replay/server/video"
 
 	"github.com/gin-gonic/gin"
 )
@@ -321,6 +322,7 @@ func (h *Handler) DeleteGame(c *gin.Context) {
 	os.Remove(game.FilePath + ".clips.json")
 	os.Remove(game.FilePath + ".bookmarks.json")
 	os.Remove(game.FilePath + ".unitclasses.json")
+	os.Remove(game.FilePath + video.SidecarSuffix)
 	// Also remove .txt sidecar
 	os.Remove(strings.TrimSuffix(game.FilePath, ".db") + ".txt")
 

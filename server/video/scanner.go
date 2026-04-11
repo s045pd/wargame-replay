@@ -70,6 +70,12 @@ func (s *Scanner) Status() Status {
 
 // Scan walks rootDir recursively and rebuilds the index. It is safe to call
 // concurrently, but only one scan runs at a time.
+//
+// On every scan we keep an on-disk cache of parsed metadata
+// (.wargame-video-index.json next to the videos). Files whose mtime + size
+// still match the cache are reused without re-parsing the mp4 box tree;
+// new or modified files are parsed and added to the cache; vanished files
+// are dropped from it.
 func (s *Scanner) Scan() error {
 	if !s.Enabled() {
 		return nil
@@ -89,7 +95,11 @@ func (s *Scanner) Scan() error {
 		s.mu.Unlock()
 	}()
 
+	cache := loadScanCache(s.rootDir)
+	seen := make(map[string]struct{}, 256)
 	entries := make([]IndexEntry, 0, 256)
+	var reused, parsed int
+
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("video: walk error at %s: %v", path, walkErr)
@@ -108,20 +118,31 @@ func (s *Scanner) Scan() error {
 			return nil
 		}
 
-		meta, err := Parse(path)
-		if err != nil {
-			log.Printf("video: parse %s: %v", path, err)
-			return nil
-		}
-
 		rel, err := filepath.Rel(s.rootDir, path)
 		if err != nil {
 			log.Printf("video: rel %s: %v", path, err)
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		seen[rel] = struct{}{}
 
-		entries = append(entries, IndexEntry{
+		mtimeUTC := info.ModTime().UTC()
+		size := info.Size()
+
+		// Cache hit: reuse parsed metadata, no mp4 work needed.
+		if cached, ok := cache.lookup(rel); ok && cached.matches(mtimeUTC, size) {
+			entries = append(entries, cached.toIndexEntry(rel, path))
+			reused++
+			return nil
+		}
+
+		// Cache miss or stale entry: re-parse from disk.
+		meta, err := Parse(path)
+		if err != nil {
+			log.Printf("video: parse %s: %v", path, err)
+			return nil
+		}
+		entry := IndexEntry{
 			RelPath:       rel,
 			AbsPath:       path,
 			StartTs:       meta.CreationTime,
@@ -129,17 +150,28 @@ func (s *Scanner) Scan() error {
 			Codec:         meta.Codec,
 			Width:         meta.Width,
 			Height:        meta.Height,
-			FileSizeBytes: info.Size(),
-			FileMTime:     info.ModTime().UTC(),
-		})
+			FileSizeBytes: size,
+			FileMTime:     mtimeUTC,
+		}
+		entries = append(entries, entry)
+		cache.store(rel, cacheEntryFromIndex(entry))
+		parsed++
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
+	cache.retainOnly(seen)
+	if saveErr := cache.save(); saveErr != nil {
+		log.Printf("video: scan cache save failed: %v", saveErr)
+	}
+
 	s.index.Replace(entries)
-	log.Printf("video: indexed %d segments from %s", len(entries), s.rootDir)
+	log.Printf(
+		"video: indexed %d segments from %s (cache hits: %d, parsed: %d)",
+		len(entries), s.rootDir, reused, parsed,
+	)
 	return nil
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, RefreshCw, Layers, PanelRight, LayoutGrid } from 'lucide-react';
+import { X, RefreshCw, Layers, PanelRight, LayoutGrid, AlertTriangle } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { useVideos, type LayoutMode } from '../store/videos';
 import { VideoGroupCard } from './VideoGroupCard';
@@ -89,6 +89,19 @@ export function VideoManager({ open, onClose }: VideoManagerProps) {
               <div className="mb-3 rounded border border-zinc-800 bg-zinc-950/40 p-2 text-[11px] text-zinc-400">
                 {interpolate(t('video_status'), { count: segmentCount, root: rootDir })}
               </div>
+
+              {(() => {
+                const staleGroupCount = groups.filter((g) =>
+                  g.segments.some((s) => s.stale),
+                ).length;
+                if (staleGroupCount === 0) return null;
+                return (
+                  <div className="mb-3 flex items-start gap-2 rounded border border-red-800 bg-red-950/30 p-2 text-[11px] text-red-300">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>{interpolate(t('video_stale_banner'), { n: staleGroupCount })}</span>
+                  </div>
+                );
+              })()}
 
               <label className="mb-2 flex cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/30 p-2 text-xs text-zinc-200">
                 <input

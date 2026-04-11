@@ -20,7 +20,7 @@ func sampleGroup(relPath string, unitID int) VideoGroup {
 		OffsetMs:    -1234,
 		Segments: []VideoSegment{
 			{
-				RelPath:    relPath,
+				Path:    relPath,
 				StartTs:    time.Unix(1700000000, 0).UTC(),
 				DurationMs: 60000,
 				Codec:      "h264",
@@ -46,8 +46,8 @@ func TestSidecarLoadMissingFile(t *testing.T) {
 func TestSidecarSaveLoad(t *testing.T) {
 	dbPath := newTestSidecar(t)
 	in := []VideoGroup{
-		{ID: "one", UnitID: 42, CameraLabel: "A", Segments: []VideoSegment{{RelPath: "a.mp4"}}},
-		{ID: "two", UnitID: 501, CameraLabel: "B", Segments: []VideoSegment{{RelPath: "b.mp4"}}},
+		{ID: "one", UnitID: 42, CameraLabel: "A", Segments: []VideoSegment{{Path: "a.mp4"}}},
+		{ID: "two", UnitID: 501, CameraLabel: "B", Segments: []VideoSegment{{Path: "b.mp4"}}},
 	}
 	if err := SaveSidecar(dbPath, "gameid", in); err != nil {
 		t.Fatal(err)

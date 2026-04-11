@@ -116,8 +116,9 @@ func TestScannerUsesCache(t *testing.T) {
 	if _, err := os.Stat(tinyFixturePath); err != nil {
 		t.Skipf("fixture missing: %v", err)
 	}
-	dir := t.TempDir()
-	dst := filepath.Join(dir, "tiny.mp4")
+	dataDir := t.TempDir()
+	sourceDir := t.TempDir()
+	dst := filepath.Join(sourceDir, "tiny.mp4")
 	src, err := os.ReadFile(tinyFixturePath)
 	if err != nil {
 		t.Fatal(err)
@@ -126,30 +127,32 @@ func TestScannerUsesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := NewScanner(dir)
+	s := NewScannerWithInitial(dataDir, sourceDir)
 	if err := s.Scan(); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 	if s.Index().Count() != 1 {
 		t.Fatalf("first scan indexed %d", s.Index().Count())
 	}
-	// Cache file should now exist.
-	if _, err := os.Stat(filepath.Join(dir, scanCacheFilename)); err != nil {
+	// Cache file should now exist next to the dataDir.
+	if _, err := os.Stat(filepath.Join(dataDir, scanCacheFilename)); err != nil {
 		t.Errorf("cache file missing after first scan: %v", err)
 	}
 
-	// Second scan: same files, should use cache (we cannot count from
-	// scanner state, but we can re-load the cache and confirm it has 1
-	// entry, and the second scan still returns 1 entry).
+	// Second scan: same files, cache should be reused.
 	if err := s.Scan(); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
 	if s.Index().Count() != 1 {
 		t.Errorf("second scan: %d entries", s.Index().Count())
 	}
-	c := loadScanCache(dir)
-	if _, ok := c.lookup("tiny.mp4"); !ok {
-		t.Errorf("cache should still contain tiny.mp4")
+	absDst, err := filepath.EvalSymlinks(dst)
+	if err != nil {
+		absDst = dst
+	}
+	c := loadScanCache(dataDir)
+	if _, ok := c.lookup(absDst); !ok {
+		t.Errorf("cache should still contain %s", absDst)
 	}
 
 	// Bump mtime to invalidate the cache for that file. Use chtimes so

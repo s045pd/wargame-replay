@@ -7,7 +7,7 @@ import (
 
 func entryFull(relPath string, start time.Time, durationMs int64, codec string, w, h int) IndexEntry {
 	return IndexEntry{
-		RelPath:    relPath,
+		AbsPath:    relPath,
 		StartTs:    start,
 		DurationMs: durationMs,
 		Codec:      codec,

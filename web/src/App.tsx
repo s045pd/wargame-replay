@@ -26,7 +26,7 @@ export default function App() {
   const { mode, setMode, toggleAutoMode, immersive, toggleImmersive } = useDirector();
   const { toggleDebugOverlay } = useHotspotFilter();
   const { addBookmark } = useClips();
-  const videoServerEnabled = useVideos((s) => s.serverEnabled);
+  const videoServerReady = useVideos((s) => s.serverReady);
   const loadVideoStatus = useVideos((s) => s.loadStatus);
   const loadVideosForGame = useVideos((s) => s.loadForGame);
   const clearVideoGame = useVideos((s) => s.clearGame);
@@ -235,7 +235,7 @@ export default function App() {
 
   // V key — toggle video manager (only when feature is enabled)
   useEffect(() => {
-    if (!videoServerEnabled) return;
+    if (!videoServerReady) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -245,7 +245,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [videoServerEnabled]);
+  }, [videoServerReady]);
 
   if (!gameId) {
     return <GameList />;
@@ -270,7 +270,7 @@ export default function App() {
         <TopBar
           onShowShortcuts={() => setShowShortcuts(true)}
           onShowSettings={() => setShowSettings(true)}
-          onShowVideoManager={videoServerEnabled ? () => setShowVideoManager(true) : undefined}
+          onShowVideoManager={videoServerReady ? () => setShowVideoManager(true) : undefined}
         />
       )}
       {!immersive && mode === 'director' ? (

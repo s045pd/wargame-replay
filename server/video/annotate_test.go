@@ -11,21 +11,21 @@ func TestAnnotateStale_AllFresh(t *testing.T) {
 
 	idx := NewIndex()
 	idx.Replace([]IndexEntry{
-		{RelPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
-		{RelPath: "b.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
+		{AbsPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
+		{AbsPath: "b.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
 	})
 
 	groups := []VideoGroup{{
 		ID: "g1",
 		Segments: []VideoSegment{
-			{RelPath: "a.mp4", FileMTime: mtime, StartTs: base},
-			{RelPath: "b.mp4", FileMTime: mtime, StartTs: base},
+			{Path: "a.mp4", FileMTime: mtime, StartTs: base},
+			{Path: "b.mp4", FileMTime: mtime, StartTs: base},
 		},
 	}}
 	idx.AnnotateStale(groups)
 	for _, seg := range groups[0].Segments {
 		if seg.Stale {
-			t.Errorf("%s should be fresh", seg.RelPath)
+			t.Errorf("%s should be fresh", seg.Path)
 		}
 	}
 }
@@ -37,7 +37,7 @@ func TestAnnotateStale_MissingFromIndex(t *testing.T) {
 	groups := []VideoGroup{{
 		ID: "g1",
 		Segments: []VideoSegment{
-			{RelPath: "gone.mp4", FileMTime: time.Unix(1000, 0).UTC(), StartTs: base},
+			{Path: "gone.mp4", FileMTime: time.Unix(1000, 0).UTC(), StartTs: base},
 		},
 	}}
 	idx.AnnotateStale(groups)
@@ -53,13 +53,13 @@ func TestAnnotateStale_MtimeChanged(t *testing.T) {
 
 	idx := NewIndex()
 	idx.Replace([]IndexEntry{
-		{RelPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: newMtime},
+		{AbsPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: newMtime},
 	})
 
 	groups := []VideoGroup{{
 		ID: "g1",
 		Segments: []VideoSegment{
-			{RelPath: "a.mp4", FileMTime: oldMtime, StartTs: base},
+			{Path: "a.mp4", FileMTime: oldMtime, StartTs: base},
 		},
 	}}
 	idx.AnnotateStale(groups)
@@ -74,14 +74,14 @@ func TestAnnotateStale_MixedInGroup(t *testing.T) {
 
 	idx := NewIndex()
 	idx.Replace([]IndexEntry{
-		{RelPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
+		{AbsPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
 	})
 
 	groups := []VideoGroup{{
 		ID: "g1",
 		Segments: []VideoSegment{
-			{RelPath: "a.mp4", FileMTime: mtime, StartTs: base},
-			{RelPath: "gone.mp4", FileMTime: mtime, StartTs: base},
+			{Path: "a.mp4", FileMTime: mtime, StartTs: base},
+			{Path: "gone.mp4", FileMTime: mtime, StartTs: base},
 		},
 	}}
 	idx.AnnotateStale(groups)
@@ -98,12 +98,12 @@ func TestAnnotateStale_MultipleGroups(t *testing.T) {
 	mtime := time.Unix(1000, 0).UTC()
 	idx := NewIndex()
 	idx.Replace([]IndexEntry{
-		{RelPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
+		{AbsPath: "a.mp4", StartTs: base, DurationMs: 1000, Codec: "h264", FileMTime: mtime},
 	})
 
 	groups := []VideoGroup{
-		{ID: "g1", Segments: []VideoSegment{{RelPath: "a.mp4", FileMTime: mtime, StartTs: base}}},
-		{ID: "g2", Segments: []VideoSegment{{RelPath: "b.mp4", FileMTime: mtime, StartTs: base}}},
+		{ID: "g1", Segments: []VideoSegment{{Path: "a.mp4", FileMTime: mtime, StartTs: base}}},
+		{ID: "g2", Segments: []VideoSegment{{Path: "b.mp4", FileMTime: mtime, StartTs: base}}},
 	}
 	idx.AnnotateStale(groups)
 	if groups[0].Segments[0].Stale {

@@ -25,11 +25,11 @@ func AutoGroup(entries []IndexEntry) []CandidateGroup {
 	sorted := make([]IndexEntry, len(entries))
 	copy(sorted, entries)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		di, dj := filepath.Dir(sorted[i].RelPath), filepath.Dir(sorted[j].RelPath)
+		di, dj := filepath.Dir(sorted[i].AbsPath), filepath.Dir(sorted[j].AbsPath)
 		if di != dj {
 			return di < dj
 		}
-		pi, pj := filenamePrefix(sorted[i].RelPath), filenamePrefix(sorted[j].RelPath)
+		pi, pj := filenamePrefix(sorted[i].AbsPath), filenamePrefix(sorted[j].AbsPath)
 		if pi != pj {
 			return pi < pj
 		}
@@ -63,10 +63,10 @@ func AutoGroup(entries []IndexEntry) []CandidateGroup {
 
 // continuous reports whether b can be appended to the group ending at a.
 func continuous(a, b IndexEntry) bool {
-	if filepath.Dir(a.RelPath) != filepath.Dir(b.RelPath) {
+	if filepath.Dir(a.AbsPath) != filepath.Dir(b.AbsPath) {
 		return false
 	}
-	if filenamePrefix(a.RelPath) != filenamePrefix(b.RelPath) {
+	if filenamePrefix(a.AbsPath) != filenamePrefix(b.AbsPath) {
 		return false
 	}
 	if strings.EqualFold(a.Codec, b.Codec) == false {
@@ -87,8 +87,8 @@ func continuous(a, b IndexEntry) bool {
 // from the same recording. GoPro uses e.g. GX010001 / GX020001 where the
 // first two ASCII letters identify the device & lens, so a 4-character prefix
 // catches most real-world split-file schemes without over-collapsing.
-func filenamePrefix(relPath string) string {
-	base := filepath.Base(relPath)
+func filenamePrefix(path string) string {
+	base := filepath.Base(path)
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	if len(base) > 4 {
 		return base[:4]
@@ -114,7 +114,10 @@ func buildCandidate(entries []IndexEntry) CandidateGroup {
 		}
 	}
 	first := entries[0]
-	key := filepath.ToSlash(filepath.Join(filepath.Dir(first.RelPath), filenamePrefix(first.RelPath)))
+	// AutoGroupKey is only used as a UI label; strip any leading "/" so
+	// long absolute paths look less noisy without changing uniqueness.
+	dir := filepath.Base(filepath.Dir(first.AbsPath))
+	key := filepath.ToSlash(filepath.Join(dir, filenamePrefix(first.AbsPath)))
 	return CandidateGroup{
 		AutoGroupKey:    key,
 		Segments:        segs,

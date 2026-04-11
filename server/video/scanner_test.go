@@ -2,16 +2,18 @@ package video
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestScannerDisabled(t *testing.T) {
+	// Empty dataDir + no sources → feature is disabled but scanner is safe to call.
 	s := NewScanner("")
 	if s.Enabled() {
-		t.Fatalf("empty root should be disabled")
+		t.Fatalf("scanner with no sources should report disabled")
 	}
 	if err := s.Scan(); err != nil {
-		t.Fatalf("Scan on disabled scanner returned error: %v", err)
+		t.Fatalf("Scan on scanner with no sources returned error: %v", err)
 	}
 	if s.Index().Count() != 0 {
 		t.Fatalf("index should be empty")
@@ -26,19 +28,30 @@ func TestScannerWithTestdata(t *testing.T) {
 	if _, err := os.Stat(tinyFixturePath); err != nil {
 		t.Skipf("fixture missing: %v", err)
 	}
-	s := NewScanner("testdata")
-	if !s.Enabled() {
-		t.Fatal("scanner should be enabled")
+	dataDir := t.TempDir()
+	abs, err := filepath.Abs("testdata")
+	if err != nil {
+		t.Fatal(err)
 	}
+	s := NewScannerWithInitial(dataDir, abs)
+	if !s.Enabled() {
+		t.Fatal("scanner should be enabled after seeding with testdata source")
+	}
+	// NewScannerWithInitial already adds the source but does not scan;
+	// kick off an explicit scan so the index populates.
 	if err := s.Scan(); err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 	if s.Index().Count() < 1 {
 		t.Fatalf("expected at least 1 entry, got %d", s.Index().Count())
 	}
-	e, ok := s.Index().Lookup("tiny.mp4")
+	tinyAbs, err := filepath.Abs(tinyFixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := s.Index().Lookup(tinyAbs)
 	if !ok {
-		t.Fatalf("lookup for tiny.mp4 failed")
+		t.Fatalf("lookup for %s failed", tinyAbs)
 	}
 	if e.Codec != "h264" {
 		t.Errorf("codec = %s, want h264", e.Codec)

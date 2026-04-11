@@ -17,6 +17,8 @@ import { usePlayback } from './playback';
 
 const LS_KEY = 'wargame-video';
 
+export type LayoutMode = 'floating' | 'dock-right' | 'grid-top';
+
 interface PerGamePrefs {
   activeGroupIds: string[];
   cardStates: Record<string, CardState>;
@@ -24,6 +26,7 @@ interface PerGamePrefs {
 
 interface StoredPrefs {
   autoActivateOnSelect: boolean;
+  layoutMode: LayoutMode;
   byGame: Record<string, PerGamePrefs>;
 }
 
@@ -37,16 +40,27 @@ const DEFAULT_CARD: CardState = {
 };
 
 function loadPrefs(): StoredPrefs {
+  const defaults: StoredPrefs = {
+    autoActivateOnSelect: true,
+    layoutMode: 'floating',
+    byGame: {},
+  };
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return { autoActivateOnSelect: true, byGame: {} };
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<StoredPrefs>;
+    const layoutMode = parsed.layoutMode;
+    const validLayout: LayoutMode =
+      layoutMode === 'floating' || layoutMode === 'dock-right' || layoutMode === 'grid-top'
+        ? layoutMode
+        : 'floating';
     return {
       autoActivateOnSelect: parsed.autoActivateOnSelect ?? true,
+      layoutMode: validLayout,
       byGame: parsed.byGame ?? {},
     };
   } catch {
-    return { autoActivateOnSelect: true, byGame: {} };
+    return defaults;
   }
 }
 
@@ -92,6 +106,7 @@ interface VideosState {
 
   // Global prefs
   autoActivateOnSelect: boolean;
+  layoutMode: LayoutMode;
 
   // Actions
   loadStatus: () => Promise<void>;
@@ -108,6 +123,7 @@ interface VideosState {
   updateCardState: (groupId: string, patch: Partial<CardState>) => void;
 
   setAutoActivate: (value: boolean) => void;
+  setLayoutMode: (mode: LayoutMode) => void;
 }
 
 function persistForGame(gameId: string, activeGroupIds: string[], cardStates: Record<string, CardState>): void {
@@ -135,6 +151,7 @@ export const useVideos = create<VideosState>((set, get) => ({
   cardStates: {},
 
   autoActivateOnSelect: _prefs.autoActivateOnSelect,
+  layoutMode: _prefs.layoutMode,
 
   async loadStatus() {
     try {
@@ -325,6 +342,13 @@ export const useVideos = create<VideosState>((set, get) => ({
     set({ autoActivateOnSelect: value });
     const prefs = loadPrefs();
     prefs.autoActivateOnSelect = value;
+    savePrefs(prefs);
+  },
+
+  setLayoutMode(mode) {
+    set({ layoutMode: mode });
+    const prefs = loadPrefs();
+    prefs.layoutMode = mode;
     savePrefs(prefs);
   },
 }));

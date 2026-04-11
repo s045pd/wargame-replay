@@ -30,6 +30,8 @@ export default function App() {
   const loadVideoStatus = useVideos((s) => s.loadStatus);
   const loadVideosForGame = useVideos((s) => s.loadForGame);
   const clearVideoGame = useVideos((s) => s.clearGame);
+  const videoLayoutMode = useVideos((s) => s.layoutMode);
+  const videoActiveCount = useVideos((s) => s.activeGroupIds.length);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -252,6 +254,16 @@ export default function App() {
   // In immersive mode: always show map (replay layout), hide top/bottom chrome
   const showMap = immersive || mode === 'replay';
 
+  // Reserve space for docked video layouts so the map and timeline don't get
+  // covered. Floating mode overlays the map and needs no padding.
+  const hasDockedVideo = !immersive && videoActiveCount > 0 && videoLayoutMode !== 'floating';
+  const mapContainerStyle =
+    hasDockedVideo && videoLayoutMode === 'dock-right'
+      ? { paddingRight: 380 }
+      : hasDockedVideo && videoLayoutMode === 'grid-top'
+        ? { paddingTop: '45vh' }
+        : undefined;
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {!immersive && (
@@ -264,7 +276,7 @@ export default function App() {
       {!immersive && mode === 'director' ? (
         <DirectorPanel />
       ) : (
-        <div className="flex-1 relative">
+        <div className="flex-1 relative" style={mapContainerStyle}>
           {showMap && (
             coordMode === 'wgs84' ? (
               <MapView units={units} immersive={immersive} />

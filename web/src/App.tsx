@@ -7,12 +7,16 @@ import { usePlayback } from './store/playback';
 import { useDirector } from './store/director';
 import { useVisualConfig } from './store/visualConfig';
 import { useClips } from './store/clips';
+import { useVideos, subscribeAutoActivate } from './store/videos';
 import { MapView } from './map/MapView';
 import { RelativeCanvas } from './map/RelativeCanvas';
 import { Timeline } from './timeline/Timeline';
 import { DirectorPanel } from './director/DirectorPanel';
 import { BookmarkList } from './clips/BookmarkList';
 import { ClipEditor } from './clips/ClipEditor';
+import { VideoEngine } from './video/VideoEngine';
+import { VideoPanel } from './video/VideoPanel';
+import { VideoManager } from './video/VideoManager';
 import { useHotspotDirector } from './hooks/useHotspotDirector';
 import { useHotspotFilter } from './store/hotspotFilter';
 
@@ -22,13 +26,34 @@ export default function App() {
   const { mode, setMode, toggleAutoMode, immersive, toggleImmersive } = useDirector();
   const { toggleDebugOverlay } = useHotspotFilter();
   const { addBookmark } = useClips();
+  const videoServerEnabled = useVideos((s) => s.serverEnabled);
+  const loadVideoStatus = useVideos((s) => s.loadStatus);
+  const loadVideosForGame = useVideos((s) => s.loadForGame);
+  const clearVideoGame = useVideos((s) => s.clearGame);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showVideoManager, setShowVideoManager] = useState(false);
 
   // Hotspot-driven director auto-camera (works in both modes)
   useHotspotDirector();
+
+  // Load video feature status once, and wire the auto-activate subscription.
+  useEffect(() => {
+    void loadVideoStatus();
+    const unsub = subscribeAutoActivate();
+    return unsub;
+  }, [loadVideoStatus]);
+
+  // Load per-game video data when the active game changes.
+  useEffect(() => {
+    if (gameId) {
+      void loadVideosForGame(gameId);
+    } else {
+      clearVideoGame();
+    }
+  }, [gameId, loadVideosForGame, clearVideoGame]);
 
   useEffect(() => {
     if (gameId) {
@@ -206,6 +231,20 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSettings]);
 
+  // V key — toggle video manager (only when feature is enabled)
+  useEffect(() => {
+    if (!videoServerEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'v' || e.key === 'V') {
+        setShowVideoManager((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [videoServerEnabled]);
+
   if (!gameId) {
     return <GameList />;
   }
@@ -215,7 +254,13 @@ export default function App() {
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {!immersive && <TopBar onShowShortcuts={() => setShowShortcuts(true)} onShowSettings={() => setShowSettings(true)} />}
+      {!immersive && (
+        <TopBar
+          onShowShortcuts={() => setShowShortcuts(true)}
+          onShowSettings={() => setShowSettings(true)}
+          onShowVideoManager={videoServerEnabled ? () => setShowVideoManager(true) : undefined}
+        />
+      )}
       {!immersive && mode === 'director' ? (
         <DirectorPanel />
       ) : (
@@ -242,6 +287,10 @@ export default function App() {
       {showSettings && (
         <SettingsPanel onClose={() => setShowSettings(false)} />
       )}
+      {/* Video sync — always mounted so floating cards can persist across panels */}
+      <VideoEngine />
+      <VideoPanel />
+      <VideoManager open={showVideoManager} onClose={() => setShowVideoManager(false)} />
     </div>
   );
 }

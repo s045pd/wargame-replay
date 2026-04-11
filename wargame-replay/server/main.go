@@ -116,6 +116,7 @@ func main() {
 	// Video sync routes (some return empty payloads when the feature is
 	// disabled, so the frontend can safely call them unconditionally).
 	r.GET("/api/videos/status", handler.GetVideoStatus)
+	r.GET("/api/videos/library", handler.GetVideoLibrary)
 	r.POST("/api/videos/rescan", handler.PostVideoRescan)
 	r.GET("/api/games/:id/videos/candidates", handler.GetVideoCandidates)
 	r.GET("/api/games/:id/videos", handler.GetVideoGroups)

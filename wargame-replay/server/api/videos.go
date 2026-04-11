@@ -22,6 +22,22 @@ func (h *Handler) GetVideoStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, h.videoScanner.Status())
 }
 
+// GetVideoLibrary handles GET /api/videos/library.
+// Returns a flat list of all indexed segments, used by the RelinkDialog
+// so a user can pick a replacement file when a sidecar reference goes stale.
+func (h *Handler) GetVideoLibrary(c *gin.Context) {
+	if h.videoScanner == nil || !h.videoScanner.Enabled() {
+		c.JSON(http.StatusOK, gin.H{"segments": []video.VideoSegment{}})
+		return
+	}
+	entries := h.videoScanner.Index().Entries()
+	segments := make([]video.VideoSegment, len(entries))
+	for i, e := range entries {
+		segments[i] = e.ToSegment()
+	}
+	c.JSON(http.StatusOK, gin.H{"segments": segments})
+}
+
 // PostVideoRescan handles POST /api/videos/rescan.  It triggers a synchronous
 // scan and returns the new status.
 func (h *Handler) PostVideoRescan(c *gin.Context) {
@@ -88,6 +104,11 @@ func (h *Handler) GetVideoGroups(c *gin.Context) {
 	}
 	if groups == nil {
 		groups = []video.VideoGroup{}
+	}
+	// Annotate stale segments so the UI can surface broken links without
+	// requiring the sidecar file itself to change.
+	if h.videoScanner != nil && h.videoScanner.Enabled() {
+		h.videoScanner.Index().AnnotateStale(groups)
 	}
 	c.JSON(http.StatusOK, gin.H{"groups": groups})
 }
@@ -221,6 +242,7 @@ func (h *Handler) PutVideoGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	h.videoScanner.Index().AnnotateStale(groups)
 	for _, g := range groups {
 		if g.ID == groupID {
 			c.JSON(http.StatusOK, g)

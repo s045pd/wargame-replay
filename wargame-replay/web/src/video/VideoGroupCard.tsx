@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Trash2, Check, Eye, EyeOff, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
+import { Trash2, Check, Eye, EyeOff, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, AlertTriangle, Link } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { usePlayback } from '../store/playback';
 import { useVideos } from '../store/videos';
 import { formatDurationMs, formatOffsetMs } from './alignMath';
 import type { VideoGroup } from '../lib/api';
+import { RelinkDialog } from './RelinkDialog';
 
 interface VideoGroupCardProps {
   group: VideoGroup;
@@ -17,6 +18,7 @@ export function VideoGroupCard({ group }: VideoGroupCardProps) {
   const setActive = useVideos((s) => s.setActive);
   const updateGroup = useVideos((s) => s.updateGroup);
   const deleteGroup = useVideos((s) => s.deleteGroup);
+  const [relinkOpen, setRelinkOpen] = useState(false);
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(group.cameraLabel);
@@ -26,13 +28,19 @@ export function VideoGroupCard({ group }: VideoGroupCardProps) {
   const teamColor = group.unitId < 500 ? 'bg-red-500' : 'bg-sky-400';
   const totalDurationMs = group.segments.reduce((sum, s) => sum + s.durationMs, 0);
   const anyIncompatible = group.segments.some((s) => !s.compatible);
+  const staleCount = group.segments.filter((s) => s.stale).length;
+  const hasStale = staleCount > 0;
 
   function nudge(deltaMs: number) {
     void updateGroup(group.id, { offsetMs: group.offsetMs + deltaMs });
   }
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
+    <div
+      className={`rounded-lg border p-3 ${
+        hasStale ? 'border-red-800 bg-red-950/20' : 'border-zinc-800 bg-zinc-950/50'
+      }`}
+    >
       <div className="flex items-start gap-2">
         <div className={`mt-1 h-2 w-2 shrink-0 rounded-full ${teamColor}`} />
         <div className="min-w-0 flex-1">
@@ -166,6 +174,27 @@ export function VideoGroupCard({ group }: VideoGroupCardProps) {
         <div className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300">
           {t('video_incompatible_warn')}
         </div>
+      )}
+
+      {hasStale && (
+        <div className="mt-2 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="flex-1">
+            {t('video_stale_warn').replace('{n}', String(staleCount))}
+          </span>
+          <button
+            type="button"
+            onClick={() => setRelinkOpen(true)}
+            className="flex items-center gap-1 rounded bg-red-500/20 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/30"
+          >
+            <Link className="h-3 w-3" />
+            {t('video_relink')}
+          </button>
+        </div>
+      )}
+
+      {relinkOpen && (
+        <RelinkDialog group={group} onClose={() => setRelinkOpen(false)} />
       )}
     </div>
   );

@@ -235,6 +235,8 @@ export interface VideoSegment {
   fileSizeBytes: number;
   fileMTime: string;
   compatible: boolean;
+  /** True when the file is missing or modified since association. */
+  stale?: boolean;
 }
 
 export interface VideoGroup {
@@ -286,6 +288,13 @@ export async function fetchVideoStatus(): Promise<VideoStatus> {
     return { enabled: false, rootDir: '', segmentCount: 0, lastScanAt: '', scanning: false };
   }
   return res.json();
+}
+
+export async function fetchVideoLibrary(): Promise<VideoSegment[]> {
+  const res = await fetch(`${BASE}/api/videos/library`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.segments ?? [];
 }
 
 export async function rescanVideos(): Promise<VideoStatus> {

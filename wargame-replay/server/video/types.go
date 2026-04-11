@@ -28,6 +28,10 @@ type VideoSegment struct {
 	FileSizeBytes int64     `json:"fileSizeBytes"`
 	FileMTime     time.Time `json:"fileMTime"`     // used to detect stale cache entries
 	Compatible    bool      `json:"compatible"`    // true if codec is browser-friendly
+	// Stale is computed at response time; not written to disk.
+	// True when the file is missing from the index, removed from disk, or
+	// its mtime is newer than what the sidecar recorded.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // VideoGroup associates one or more continuous segments with a single unit

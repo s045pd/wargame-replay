@@ -122,3 +122,38 @@ func (idx *Index) Entries() []IndexEntry {
 	copy(dup, idx.entries)
 	return dup
 }
+
+// AnnotateStale walks each segment in every group, checks whether the
+// underlying file still exists on disk, and sets the Stale flag on the
+// segment accordingly. A segment is stale when:
+//
+//   - it is no longer in the in-memory index (file removed/renamed), or
+//   - its current mtime on disk is newer than what the sidecar records
+//     (content changed since the group was created).
+//
+// Mutates groups in place for efficiency; callers use the same slice.
+func (idx *Index) AnnotateStale(groups []VideoGroup) {
+	idx.mu.RLock()
+	entries := idx.byPath
+	snapshot := idx.entries
+	idx.mu.RUnlock()
+
+	for gi := range groups {
+		for si := range groups[gi].Segments {
+			seg := &groups[gi].Segments[si]
+			i, ok := entries[seg.RelPath]
+			if !ok {
+				seg.Stale = true
+				continue
+			}
+			live := snapshot[i]
+			// mtime changed → file was rewritten; treat as stale so the
+			// UI prompts the user to re-associate.
+			if !live.FileMTime.Equal(seg.FileMTime) {
+				seg.Stale = true
+				continue
+			}
+			seg.Stale = false
+		}
+	}
+}

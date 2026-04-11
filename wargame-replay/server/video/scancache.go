@@ -10,12 +10,13 @@ import (
 	"time"
 )
 
-// scanCacheFilename is the relative cache file kept inside the video root.
-// Hidden + descriptive so users can spot and delete it manually if needed.
+// scanCacheFilename is the relative cache file kept inside the data
+// directory (next to the .db files).  Hidden + descriptive so users can
+// spot and delete it manually if needed.
 const scanCacheFilename = ".wargame-video-index.json"
 
 // scanCacheVersion is bumped any time the on-disk schema changes.
-const scanCacheVersion = 1
+const scanCacheVersion = 2
 
 // scanCacheEntry is one cached file's metadata.  All fields are written
 // straight from IndexEntry; we just keep the parts that are stable.
@@ -29,32 +30,32 @@ type scanCacheEntry struct {
 	Height        int       `json:"height"`
 }
 
-// scanCache wraps the on-disk index keyed by relative path.
+// scanCache wraps the on-disk index keyed by absolute path.  Persisted
+// under dataDir so it survives across source add/remove without needing
+// to live inside any particular source directory.
 type scanCache struct {
 	mu      sync.Mutex
-	rootDir string
+	dataDir string
 	Version int                       `json:"version"`
 	Entries map[string]scanCacheEntry `json:"entries"`
 }
 
-// loadScanCache reads the cache file under rootDir, returning a new empty
-// cache if the file is missing, malformed, or has an incompatible version.
-func loadScanCache(rootDir string) *scanCache {
+// loadScanCache reads the cache file under dataDir, returning a new
+// empty cache if the file is missing, malformed, or has an
+// incompatible version.
+func loadScanCache(dataDir string) *scanCache {
 	cache := &scanCache{
-		rootDir: rootDir,
+		dataDir: dataDir,
 		Version: scanCacheVersion,
 		Entries: map[string]scanCacheEntry{},
 	}
-	if rootDir == "" {
+	if dataDir == "" {
 		return cache
 	}
-	path := filepath.Join(rootDir, scanCacheFilename)
+	path := filepath.Join(dataDir, scanCacheFilename)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			// Corruption or permission errors are non-fatal: just start fresh.
-			return cache
-		}
+		// Missing or unreadable → start fresh, no error.
 		return cache
 	}
 	var disk struct {
@@ -76,21 +77,21 @@ func loadScanCache(rootDir string) *scanCache {
 
 // lookup returns a cached entry if present.  Caller decides whether the
 // underlying file's current mtime/size still matches.
-func (c *scanCache) lookup(relPath string) (scanCacheEntry, bool) {
+func (c *scanCache) lookup(absPath string) (scanCacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.Entries[relPath]
+	e, ok := c.Entries[absPath]
 	return e, ok
 }
 
-// store inserts or replaces the cache row for relPath.
-func (c *scanCache) store(relPath string, entry scanCacheEntry) {
+// store inserts or replaces the cache row for absPath.
+func (c *scanCache) store(absPath string, entry scanCacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Entries[relPath] = entry
+	c.Entries[absPath] = entry
 }
 
-// retainOnly drops cache rows whose relPath is not in the supplied set.
+// retainOnly drops cache rows whose absPath is not in the supplied set.
 // Used after a full scan to garbage-collect entries for files that no
 // longer exist on disk.
 func (c *scanCache) retainOnly(seen map[string]struct{}) {
@@ -103,10 +104,9 @@ func (c *scanCache) retainOnly(seen map[string]struct{}) {
 	}
 }
 
-// save atomically rewrites the cache file under rootDir.  Best-effort: a
-// failure to persist is logged by the caller but does not break scans.
+// save atomically rewrites the cache file under dataDir.
 func (c *scanCache) save() error {
-	if c.rootDir == "" {
+	if c.dataDir == "" {
 		return nil
 	}
 	c.mu.Lock()
@@ -123,7 +123,7 @@ func (c *scanCache) save() error {
 	if err != nil {
 		return fmt.Errorf("marshal scan cache: %w", err)
 	}
-	dest := filepath.Join(c.rootDir, scanCacheFilename)
+	dest := filepath.Join(c.dataDir, scanCacheFilename)
 	tmp := dest + ".uploading"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write scan cache tmp: %w", err)
@@ -146,9 +146,8 @@ func (e scanCacheEntry) matches(fileMTime time.Time, fileSize int64) bool {
 }
 
 // toIndexEntry materializes a cached row back into an IndexEntry.
-func (e scanCacheEntry) toIndexEntry(relPath, absPath string) IndexEntry {
+func (e scanCacheEntry) toIndexEntry(absPath string) IndexEntry {
 	return IndexEntry{
-		RelPath:       relPath,
 		AbsPath:       absPath,
 		StartTs:       e.StartTs,
 		DurationMs:    e.DurationMs,
@@ -160,7 +159,7 @@ func (e scanCacheEntry) toIndexEntry(relPath, absPath string) IndexEntry {
 	}
 }
 
-// fromIndexEntry materializes an IndexEntry into a cache row.
+// cacheEntryFromIndex materializes an IndexEntry into a cache row.
 func cacheEntryFromIndex(entry IndexEntry) scanCacheEntry {
 	return scanCacheEntry{
 		FileMTime:     entry.FileMTime,
@@ -172,3 +171,7 @@ func cacheEntryFromIndex(entry IndexEntry) scanCacheEntry {
 		Height:        entry.Height,
 	}
 }
+
+// Unused reference prevents unused-import warnings if callers of
+// errors.Is drift; harmless at link time.
+var _ = errors.Is

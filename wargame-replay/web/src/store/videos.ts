@@ -3,15 +3,21 @@ import {
   fetchVideoStatus,
   fetchVideoCandidates,
   fetchVideoGroups,
+  fetchVideoSources,
+  addVideoSource,
+  deleteVideoSource,
+  quickAddVideoSource,
   createVideoGroup,
   updateVideoGroup,
   deleteVideoGroup,
   rescanVideos,
   type VideoStatus,
+  type VideoSource,
   type VideoGroup,
   type CandidateGroup,
   type CreateVideoGroupPayload,
   type UpdateVideoGroupPayload,
+  type QuickAddPayload,
 } from '../lib/api';
 import { usePlayback } from './playback';
 
@@ -84,9 +90,15 @@ export interface CardState {
 }
 
 interface VideosState {
-  // Server feature status
+  // Server feature status.
+  // `ready` is true once the scanner object exists on the server (the
+  // feature is always wired up in Phase 3, regardless of command-line
+  // flags). `enabled` is true only once at least one source is
+  // registered.
+  serverReady: boolean;
   serverEnabled: boolean;
-  rootDir: string;
+  sources: string[];
+  sourceDetails: VideoSource[];
   segmentCount: number;
   scanning: boolean;
   statusError: string | null;
@@ -111,6 +123,10 @@ interface VideosState {
   // Actions
   loadStatus: () => Promise<void>;
   rescan: () => Promise<void>;
+  loadSources: () => Promise<void>;
+  addSource: (path: string) => Promise<string | null>;
+  removeSource: (path: string) => Promise<void>;
+  quickAdd: (payload: QuickAddPayload) => Promise<VideoGroup | null>;
   loadForGame: (gameId: string) => Promise<void>;
   clearGame: () => void;
 
@@ -133,8 +149,10 @@ function persistForGame(gameId: string, activeGroupIds: string[], cardStates: Re
 }
 
 export const useVideos = create<VideosState>((set, get) => ({
+  serverReady: false,
   serverEnabled: false,
-  rootDir: '',
+  sources: [],
+  sourceDetails: [],
   segmentCount: 0,
   scanning: false,
   statusError: null,
@@ -157,33 +175,90 @@ export const useVideos = create<VideosState>((set, get) => ({
     try {
       const status: VideoStatus = await fetchVideoStatus();
       set({
+        serverReady: status.ready,
         serverEnabled: status.enabled,
-        rootDir: status.rootDir,
+        sources: status.sources,
         segmentCount: status.segmentCount,
         scanning: status.scanning,
         statusError: null,
       });
     } catch (err: unknown) {
       set({
+        serverReady: false,
         serverEnabled: false,
         statusError: err instanceof Error ? err.message : String(err),
       });
     }
   },
 
+  async loadSources() {
+    try {
+      const details = await fetchVideoSources();
+      set({
+        sourceDetails: details,
+        sources: details.map((d) => d.path),
+        serverEnabled: details.length > 0,
+      });
+    } catch (err: unknown) {
+      set({ statusError: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  async addSource(path: string) {
+    try {
+      const abs = await addVideoSource(path);
+      await get().loadStatus();
+      await get().loadSources();
+      const gid = get().gameId;
+      if (gid) await get().loadForGame(gid);
+      return abs;
+    } catch (err: unknown) {
+      set({ statusError: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  },
+
+  async removeSource(path: string) {
+    try {
+      await deleteVideoSource(path);
+      await get().loadStatus();
+      await get().loadSources();
+      const gid = get().gameId;
+      if (gid) await get().loadForGame(gid);
+    } catch (err: unknown) {
+      set({ statusError: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  async quickAdd(payload: QuickAddPayload) {
+    const gid = get().gameId;
+    if (!gid) return null;
+    try {
+      const res = await quickAddVideoSource(gid, payload);
+      // Refresh state so the UI sees the new source and group.
+      await get().loadStatus();
+      await get().loadSources();
+      await get().loadForGame(gid);
+      return res.group;
+    } catch (err: unknown) {
+      set({ groupsError: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  },
+
   async rescan() {
-    const current = get();
-    if (!current.serverEnabled) return;
     set({ scanning: true });
     try {
       const status = await rescanVideos();
       set({
+        serverReady: status.ready,
         serverEnabled: status.enabled,
-        rootDir: status.rootDir,
+        sources: status.sources,
         segmentCount: status.segmentCount,
         scanning: status.scanning,
         statusError: null,
       });
+      await get().loadSources();
       const g = get().gameId;
       if (g) await get().loadForGame(g);
     } catch (err: unknown) {

@@ -8,10 +8,13 @@ import (
 
 // Index is an in-memory, thread-safe store of scanned video segments.
 // Its contents are rebuilt from scratch by Scanner.Scan via Replace.
+//
+// Entries are keyed by absolute path.  Callers that used to pass a
+// relative path now pass the same string used as IndexEntry.AbsPath.
 type Index struct {
 	mu      sync.RWMutex
 	entries []IndexEntry   // sorted by StartTs ascending
-	byPath  map[string]int // relPath → entries index
+	byPath  map[string]int // absPath → entries index
 }
 
 // NewIndex returns an empty Index.
@@ -20,7 +23,7 @@ func NewIndex() *Index {
 }
 
 // Replace swaps in a new set of entries. The input slice is sorted by StartTs
-// and then indexed by RelPath.
+// and then indexed by AbsPath.
 func (idx *Index) Replace(entries []IndexEntry) {
 	dup := make([]IndexEntry, len(entries))
 	copy(dup, entries)
@@ -29,7 +32,7 @@ func (idx *Index) Replace(entries []IndexEntry) {
 	})
 	byPath := make(map[string]int, len(dup))
 	for i, e := range dup {
-		byPath[e.RelPath] = i
+		byPath[e.AbsPath] = i
 	}
 	idx.mu.Lock()
 	idx.entries = dup
@@ -44,11 +47,11 @@ func (idx *Index) Count() int {
 	return len(idx.entries)
 }
 
-// Lookup returns the entry at relPath, if any.
-func (idx *Index) Lookup(relPath string) (IndexEntry, bool) {
+// Lookup returns the entry at absPath, if any.
+func (idx *Index) Lookup(absPath string) (IndexEntry, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	i, ok := idx.byPath[relPath]
+	i, ok := idx.byPath[absPath]
 	if !ok {
 		return IndexEntry{}, false
 	}
@@ -141,7 +144,7 @@ func (idx *Index) AnnotateStale(groups []VideoGroup) {
 	for gi := range groups {
 		for si := range groups[gi].Segments {
 			seg := &groups[gi].Segments[si]
-			i, ok := entries[seg.RelPath]
+			i, ok := entries[seg.Path]
 			if !ok {
 				seg.Stale = true
 				continue

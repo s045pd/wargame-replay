@@ -71,23 +71,20 @@ func main() {
 		log.Fatalf("Failed to initialize handler: %v", err)
 	}
 
-	// Video sync feature: if -videodir was provided use it; otherwise auto-detect
-	// {dir}/videos.  Empty root (or non-existent directory) leaves the feature
-	// disabled and the frontend will hide its UI via GET /api/videos/status.
-	effectiveVideoDir := *videoDir
-	if effectiveVideoDir == "" {
+	// Video sync feature: sources are persisted to {dir}/.wargame-video-sources.json
+	// and managed at runtime via the UI. The -videodir flag (and {dir}/videos
+	// auto-detect) are only used as a one-time seed on first launch; after
+	// that they are ignored so users can remove them via the UI.
+	initialVideoDir := *videoDir
+	if initialVideoDir == "" {
 		candidate := filepath.Join(*dir, "videos")
 		if st, statErr := os.Stat(candidate); statErr == nil && st.IsDir() {
-			effectiveVideoDir = candidate
+			initialVideoDir = candidate
 		}
 	}
-	videoScanner := video.NewScanner(effectiveVideoDir)
-	if videoScanner.Enabled() {
-		if err := videoScanner.Scan(); err != nil {
-			log.Printf("video: initial scan failed: %v", err)
-		}
-	} else {
-		log.Printf("video: feature disabled (no -videodir configured)")
+	videoScanner := video.NewScannerWithInitial(*dir, initialVideoDir)
+	if err := videoScanner.Scan(); err != nil {
+		log.Printf("video: initial scan failed: %v", err)
 	}
 	handler.SetVideoScanner(videoScanner)
 
@@ -113,17 +110,21 @@ func main() {
 	r.PUT("/api/games/:id/unitclasses", handler.SetUnitClasses)
 	r.POST("/api/upload", handler.UploadGame)
 	r.DELETE("/api/games/:id", handler.DeleteGame)
-	// Video sync routes (some return empty payloads when the feature is
-	// disabled, so the frontend can safely call them unconditionally).
+	// Video sync routes (all safe to call when no source is registered).
 	r.GET("/api/videos/status", handler.GetVideoStatus)
 	r.GET("/api/videos/library", handler.GetVideoLibrary)
 	r.POST("/api/videos/rescan", handler.PostVideoRescan)
+	r.GET("/api/videos/sources", handler.GetVideoSources)
+	r.POST("/api/videos/sources", handler.PostVideoSource)
+	r.DELETE("/api/videos/sources", handler.DeleteVideoSource)
+	r.GET("/api/videos/browse", handler.GetBrowseDirectory)
 	r.GET("/api/games/:id/videos/candidates", handler.GetVideoCandidates)
 	r.GET("/api/games/:id/videos", handler.GetVideoGroups)
 	r.POST("/api/games/:id/videos", handler.PostVideoGroup)
+	r.POST("/api/games/:id/videos/quick-add", handler.PostQuickAdd)
 	r.PUT("/api/games/:id/videos/:groupId", handler.PutVideoGroup)
 	r.DELETE("/api/games/:id/videos/:groupId", handler.DeleteVideoGroup)
-	r.GET("/api/video-stream/*relPath", handler.StreamVideo)
+	r.GET("/api/video-stream/:token", handler.StreamVideo)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	serveStatic(r)

@@ -18,16 +18,22 @@ const SidecarSuffix = ".videos.json"
 const SidecarVersion = 1
 
 // VideoSegment is one contiguous piece of recording (typically one .mp4 file).
+//
+// As of Phase 3, the Path field stores the segment's absolute path on the
+// server's filesystem. The JSON tag is still "relPath" so existing sidecar
+// files keep working; the name is historical. Path safety is enforced in
+// the stream handler by verifying the path lies under one of the
+// currently registered source directories.
 type VideoSegment struct {
-	RelPath       string    `json:"relPath"`       // relative to VideoRoot, forward slashes
-	StartTs       time.Time `json:"startTs"`       // UTC, from mp4 moov.mvhd creation_time
+	Path          string    `json:"relPath"`
+	StartTs       time.Time `json:"startTs"`
 	DurationMs    int64     `json:"durationMs"`
-	Codec         string    `json:"codec"`         // "h264" | "hevc" | "av1" | "vp9" | ...
+	Codec         string    `json:"codec"`
 	Width         int       `json:"width"`
 	Height        int       `json:"height"`
 	FileSizeBytes int64     `json:"fileSizeBytes"`
-	FileMTime     time.Time `json:"fileMTime"`     // used to detect stale cache entries
-	Compatible    bool      `json:"compatible"`    // true if codec is browser-friendly
+	FileMTime     time.Time `json:"fileMTime"`
+	Compatible    bool      `json:"compatible"`
 	// Stale is computed at response time; not written to disk.
 	// True when the file is missing from the index, removed from disk, or
 	// its mtime is newer than what the sidecar recorded.
@@ -50,10 +56,9 @@ type VideoGroup struct {
 	Notes       string         `json:"notes,omitempty"`
 }
 
-// IndexEntry is one row in the in-memory scan index. Absolute and relative
-// paths are kept together so handlers do not have to re-join them.
+// IndexEntry is one row in the in-memory scan index, keyed by the segment's
+// canonical absolute path on disk.
 type IndexEntry struct {
-	RelPath       string    `json:"relPath"`
 	AbsPath       string    `json:"-"`
 	StartTs       time.Time `json:"startTs"`
 	DurationMs    int64     `json:"durationMs"`
@@ -65,10 +70,11 @@ type IndexEntry struct {
 }
 
 // ToSegment converts an IndexEntry into the JSON-serialized VideoSegment
-// the frontend sees.
+// the frontend sees.  VideoSegment.Path carries the absolute path (the
+// JSON tag is still "relPath" for sidecar backwards-compatibility).
 func (e IndexEntry) ToSegment() VideoSegment {
 	return VideoSegment{
-		RelPath:       e.RelPath,
+		Path:          e.AbsPath,
 		StartTs:       e.StartTs,
 		DurationMs:    e.DurationMs,
 		Codec:         e.Codec,
@@ -92,8 +98,11 @@ type CandidateGroup struct {
 
 // Status describes the feature state reported to the frontend.
 type Status struct {
+	// Enabled is true when at least one source is registered. The UI uses
+	// it to decide whether to show the "add source" empty state or the
+	// normal groups/candidates UI.
 	Enabled      bool      `json:"enabled"`
-	RootDir      string    `json:"rootDir"`
+	Sources      []string  `json:"sources"`
 	SegmentCount int       `json:"segmentCount"`
 	LastScanAt   time.Time `json:"lastScanAt"`
 	Scanning     bool      `json:"scanning"`

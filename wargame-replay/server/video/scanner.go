@@ -1,42 +1,92 @@
 package video
 
 import (
+	"fmt"
 	"io/fs"
 	"log"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Scanner walks a root directory, parses metadata from recognised video files,
-// and populates an Index.
+// Scanner walks one or more user-provided source directories, parses
+// metadata from recognised video files, and populates an Index.
 //
-// An empty rootDir disables the feature: Enabled() returns false and Scan is
-// a no-op.
+// Starting with Phase 3, the scanner is multi-source: the user adds and
+// removes source directories at runtime via the HTTP API and they are
+// persisted to {dataDir}/.wargame-video-sources.json.  Legacy callers can
+// still supply an initial directory via NewScannerWithInitial, which is
+// how the -videodir startup flag plumbs through.
 type Scanner struct {
-	rootDir string
+	dataDir string // where sources.json + scan cache live
 	index   *Index
 
 	mu         sync.Mutex
+	sources    []string // absolute, symlink-resolved, deduplicated
 	scanning   bool
 	lastScanAt time.Time
 }
 
-// NewScanner returns a Scanner rooted at rootDir. When rootDir is empty, the
-// feature is disabled.
-func NewScanner(rootDir string) *Scanner {
-	return &Scanner{
-		rootDir: rootDir,
+// NewScanner returns a Scanner that persists sources under dataDir.
+// Passing an empty dataDir is permitted but disables persistence.
+func NewScanner(dataDir string) *Scanner {
+	s := &Scanner{
+		dataDir: dataDir,
 		index:   NewIndex(),
 	}
+	if dataDir != "" {
+		if persisted, err := loadSources(dataDir); err != nil {
+			log.Printf("video: load sources: %v", err)
+		} else {
+			s.sources = persisted
+		}
+	}
+	return s
 }
 
-// Enabled reports whether a root directory was configured.
-func (s *Scanner) Enabled() bool { return s.rootDir != "" }
+// NewScannerWithInitial is a convenience constructor that also inserts one
+// initial source directory if it does not already appear in the persisted
+// list.  Used by main.go to plumb through the -videodir flag.
+func NewScannerWithInitial(dataDir, initial string) *Scanner {
+	s := NewScanner(dataDir)
+	if initial == "" {
+		return s
+	}
+	abs, err := canonicalizeDir(initial)
+	if err != nil {
+		log.Printf("video: ignoring initial source %q: %v", initial, err)
+		return s
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !containsString(s.sources, abs) {
+		s.sources = append(s.sources, abs)
+		if err := saveSources(s.dataDir, s.sources); err != nil {
+			log.Printf("video: save sources: %v", err)
+		}
+	}
+	return s
+}
 
-// RootDir returns the configured root directory.
-func (s *Scanner) RootDir() string { return s.rootDir }
+// Enabled reports whether at least one source directory is configured.
+// With zero sources the feature is still addressable (the UI uses the
+// sources API to add one) but no segments are indexed yet.
+func (s *Scanner) Enabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sources) > 0
+}
+
+// Sources returns a copy of the current source directory list.
+func (s *Scanner) Sources() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.sources))
+	copy(out, s.sources)
+	return out
+}
 
 // Index returns the backing index.
 func (s *Scanner) Index() *Index { return s.index }
@@ -59,33 +109,120 @@ func (s *Scanner) LastScanAt() time.Time {
 func (s *Scanner) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	sourcesCopy := make([]string, len(s.sources))
+	copy(sourcesCopy, s.sources)
 	return Status{
-		Enabled:      s.rootDir != "",
-		RootDir:      s.rootDir,
+		Enabled:      len(s.sources) > 0,
+		Sources:      sourcesCopy,
 		SegmentCount: s.index.Count(),
 		LastScanAt:   s.lastScanAt,
 		Scanning:     s.scanning,
 	}
 }
 
-// Scan walks rootDir recursively and rebuilds the index. It is safe to call
-// concurrently, but only one scan runs at a time.
-//
-// On every scan we keep an on-disk cache of parsed metadata
-// (.wargame-video-index.json next to the videos). Files whose mtime + size
-// still match the cache are reused without re-parsing the mp4 box tree;
-// new or modified files are parsed and added to the cache; vanished files
-// are dropped from it.
-func (s *Scanner) Scan() error {
-	if !s.Enabled() {
-		return nil
+// AddSource canonicalizes the provided directory, persists it to the
+// sources file, then triggers an incremental scan so new entries become
+// addressable immediately.  It is idempotent: adding the same directory
+// twice is a no-op for the second call.
+func (s *Scanner) AddSource(path string) (string, error) {
+	abs, err := canonicalizeDir(path)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize source %q: %w", path, err)
 	}
+	s.mu.Lock()
+	if containsString(s.sources, abs) {
+		s.mu.Unlock()
+		return abs, nil
+	}
+	s.sources = append(s.sources, abs)
+	sourcesSnapshot := append([]string(nil), s.sources...)
+	s.mu.Unlock()
+
+	if err := saveSources(s.dataDir, sourcesSnapshot); err != nil {
+		return "", fmt.Errorf("persist sources: %w", err)
+	}
+	if err := s.Scan(); err != nil {
+		return "", fmt.Errorf("scan after add: %w", err)
+	}
+	return abs, nil
+}
+
+// RemoveSource drops a source by its canonical absolute path.  Returns
+// ErrSourceUnknown when the path is not currently registered.
+func (s *Scanner) RemoveSource(path string) error {
+	abs, err := canonicalizeDir(path)
+	if err != nil {
+		// Fall back to raw string match — the user may have given us a
+		// symlinked path that no longer resolves.
+		abs = path
+	}
+	s.mu.Lock()
+	idx := -1
+	for i, src := range s.sources {
+		if src == abs {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		s.mu.Unlock()
+		return ErrSourceUnknown
+	}
+	s.sources = append(s.sources[:idx], s.sources[idx+1:]...)
+	sourcesSnapshot := append([]string(nil), s.sources...)
+	s.mu.Unlock()
+
+	if err := saveSources(s.dataDir, sourcesSnapshot); err != nil {
+		return fmt.Errorf("persist sources: %w", err)
+	}
+	return s.Scan()
+}
+
+// IsInsideSource reports whether the given absolute path lies beneath any
+// registered source directory.  Used by the stream handler for path safety.
+//
+// Both sides are symlink-resolved before comparison, so a symlink inside a
+// source cannot escape.
+func (s *Scanner) IsInsideSource(absPath string) bool {
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	sources := append([]string(nil), s.sources...)
+	s.mu.Unlock()
+	for _, src := range sources {
+		realSrc, err := filepath.EvalSymlinks(src)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(realSrc, realPath)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// Scan walks every registered source directory, merges results into a
+// single Index, and updates the scan cache.  Safe to call concurrently,
+// but only one scan runs at a time.
+//
+// Files whose mtime + size still match the cache are reused without
+// re-parsing; new or modified files are parsed; vanished files are
+// dropped from the cache.
+func (s *Scanner) Scan() error {
 	s.mu.Lock()
 	if s.scanning {
 		s.mu.Unlock()
 		return nil
 	}
 	s.scanning = true
+	sourcesSnapshot := append([]string(nil), s.sources...)
 	s.mu.Unlock()
 
 	defer func() {
@@ -95,12 +232,47 @@ func (s *Scanner) Scan() error {
 		s.mu.Unlock()
 	}()
 
-	cache := loadScanCache(s.rootDir)
+	cache := loadScanCache(s.dataDir)
 	seen := make(map[string]struct{}, 256)
 	entries := make([]IndexEntry, 0, 256)
 	var reused, parsed int
 
-	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
+	for _, sourceDir := range sourcesSnapshot {
+		if err := walkOneSource(sourceDir, cache, seen, &entries, &reused, &parsed); err != nil {
+			log.Printf("video: scan %s: %v", sourceDir, err)
+		}
+	}
+
+	cache.retainOnly(seen)
+	if err := cache.save(); err != nil {
+		log.Printf("video: scan cache save failed: %v", err)
+	}
+
+	// Deterministic order: sort by absolute path so the index is stable
+	// across runs regardless of filesystem walk order.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].AbsPath < entries[j].AbsPath
+	})
+
+	s.index.Replace(entries)
+	log.Printf(
+		"video: indexed %d segments from %d source(s) (cache hits: %d, parsed: %d)",
+		len(entries), len(sourcesSnapshot), reused, parsed,
+	)
+	return nil
+}
+
+// walkOneSource adds all recognised video files under sourceDir to entries,
+// consulting and updating cache along the way.  Errors at individual files
+// are logged and ignored — one bad mp4 should not abort the whole scan.
+func walkOneSource(
+	sourceDir string,
+	cache *scanCache,
+	seen map[string]struct{},
+	entries *[]IndexEntry,
+	reused, parsed *int,
+) error {
+	return filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("video: walk error at %s: %v", path, walkErr)
 			return nil
@@ -111,40 +283,35 @@ func (s *Scanner) Scan() error {
 		if !isVideoExt(path) {
 			return nil
 		}
-
 		info, err := d.Info()
 		if err != nil {
 			log.Printf("video: stat %s: %v", path, err)
 			return nil
 		}
-
-		rel, err := filepath.Rel(s.rootDir, path)
+		absPath, err := filepath.Abs(path)
 		if err != nil {
-			log.Printf("video: rel %s: %v", path, err)
+			log.Printf("video: abs %s: %v", path, err)
 			return nil
 		}
-		rel = filepath.ToSlash(rel)
-		seen[rel] = struct{}{}
+		seen[absPath] = struct{}{}
 
 		mtimeUTC := info.ModTime().UTC()
 		size := info.Size()
 
 		// Cache hit: reuse parsed metadata, no mp4 work needed.
-		if cached, ok := cache.lookup(rel); ok && cached.matches(mtimeUTC, size) {
-			entries = append(entries, cached.toIndexEntry(rel, path))
-			reused++
+		if cached, ok := cache.lookup(absPath); ok && cached.matches(mtimeUTC, size) {
+			*entries = append(*entries, cached.toIndexEntry(absPath))
+			*reused++
 			return nil
 		}
 
-		// Cache miss or stale entry: re-parse from disk.
 		meta, err := Parse(path)
 		if err != nil {
 			log.Printf("video: parse %s: %v", path, err)
 			return nil
 		}
 		entry := IndexEntry{
-			RelPath:       rel,
-			AbsPath:       path,
+			AbsPath:       absPath,
 			StartTs:       meta.CreationTime,
 			DurationMs:    meta.DurationMs,
 			Codec:         meta.Codec,
@@ -153,26 +320,11 @@ func (s *Scanner) Scan() error {
 			FileSizeBytes: size,
 			FileMTime:     mtimeUTC,
 		}
-		entries = append(entries, entry)
-		cache.store(rel, cacheEntryFromIndex(entry))
-		parsed++
+		*entries = append(*entries, entry)
+		cache.store(absPath, cacheEntryFromIndex(entry))
+		*parsed++
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-
-	cache.retainOnly(seen)
-	if saveErr := cache.save(); saveErr != nil {
-		log.Printf("video: scan cache save failed: %v", saveErr)
-	}
-
-	s.index.Replace(entries)
-	log.Printf(
-		"video: indexed %d segments from %s (cache hits: %d, parsed: %d)",
-		len(entries), s.rootDir, reused, parsed,
-	)
-	return nil
 }
 
 // isVideoExt returns true when the extension matches a container we know how
@@ -181,6 +333,46 @@ func isVideoExt(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mp4", ".m4v", ".mov":
 		return true
+	}
+	return false
+}
+
+// canonicalizeDir resolves a user-provided path to an absolute, cleaned
+// directory path.  It rejects non-directories and non-existent paths.
+// Symlinks are resolved so callers can rely on comparisons working.
+func canonicalizeDir(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("abs: %w", err)
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("eval symlinks: %w", err)
+	}
+	// Refuse non-directories so callers cannot accidentally register a
+	// single file as a source.
+	info, err := fsStat(real)
+	if err != nil {
+		return "", fmt.Errorf("stat: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory: %s", real)
+	}
+	return filepath.Clean(real), nil
+}
+
+// containsString is a tiny helper kept local to avoid pulling in slices
+// package for one call (go.mod is 1.21, slices.Contains is available but
+// we keep the helper for readability next to RemoveSource's manual index
+// search).
+func containsString(ss []string, target string) bool {
+	for _, s := range ss {
+		if s == target {
+			return true
+		}
 	}
 	return false
 }

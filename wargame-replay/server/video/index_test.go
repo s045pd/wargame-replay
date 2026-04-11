@@ -17,7 +17,7 @@ func mustParseTs(t *testing.T, s string) time.Time {
 
 func entry(relPath string, start time.Time, durationMs int64) IndexEntry {
 	return IndexEntry{
-		RelPath:    relPath,
+		AbsPath:    relPath,
 		StartTs:    start,
 		DurationMs: durationMs,
 		Codec:      "h264",
@@ -41,7 +41,7 @@ func TestIndexReplaceAndCount(t *testing.T) {
 	}
 	// Replace should sort by StartTs ascending.
 	list := idx.Entries()
-	if list[0].RelPath != "a.mp4" || list[1].RelPath != "b.mp4" {
+	if list[0].AbsPath != "a.mp4" || list[1].AbsPath != "b.mp4" {
 		t.Errorf("unsorted: %v", list)
 	}
 }
@@ -54,7 +54,7 @@ func TestIndexLookup(t *testing.T) {
 	if !ok {
 		t.Fatal("lookup missed")
 	}
-	if got.RelPath != "foo.mp4" {
+	if got.AbsPath != "foo.mp4" {
 		t.Errorf("got = %v", got)
 	}
 	if _, ok := idx.Lookup("nope.mp4"); ok {
@@ -125,8 +125,8 @@ func TestIndexFindOverlapping(t *testing.T) {
 				t.Fatalf("got %d entries %v, want %v", len(got), relsOf(got), tc.wantRels)
 			}
 			for i, e := range got {
-				if e.RelPath != tc.wantRels[i] {
-					t.Errorf("entry %d = %s, want %s", i, e.RelPath, tc.wantRels[i])
+				if e.AbsPath != tc.wantRels[i] {
+					t.Errorf("entry %d = %s, want %s", i, e.AbsPath, tc.wantRels[i])
 				}
 			}
 		})
@@ -136,7 +136,7 @@ func TestIndexFindOverlapping(t *testing.T) {
 func relsOf(entries []IndexEntry) []string {
 	out := make([]string, len(entries))
 	for i, e := range entries {
-		out[i] = e.RelPath
+		out[i] = e.AbsPath
 	}
 	return out
 }

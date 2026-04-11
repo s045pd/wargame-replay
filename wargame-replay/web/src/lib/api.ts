@@ -226,8 +226,14 @@ export async function saveUnitClasses(gameId: string, classes: Record<string, st
 // ─── Video Sync ─────────────────────────────────────────────────────────────
 
 export interface VideoSegment {
+  /**
+   * Absolute path on the server's filesystem. The JSON field is still
+   * named `relPath` because sidecar files written by earlier versions
+   * use that name; the semantic is now "whatever path the scanner
+   * currently considers the canonical key for this file".
+   */
   relPath: string;
-  startTs: string; // ISO 8601 UTC (from mp4 moov.mvhd creation_time)
+  startTs: string;
   durationMs: number;
   codec: string;
   width: number;
@@ -259,11 +265,44 @@ export interface CandidateGroup {
 }
 
 export interface VideoStatus {
+  /** True when the server has the scanner object wired up. */
+  ready: boolean;
+  /** True when at least one source directory is registered. */
   enabled: boolean;
-  rootDir: string;
+  sources: string[];
   segmentCount: number;
   lastScanAt: string;
   scanning: boolean;
+}
+
+export interface VideoSource {
+  path: string;
+  segmentCount: number;
+  exists: boolean;
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  videoCount?: number;
+}
+
+export interface BrowseResponse {
+  path: string;
+  parent: string;
+  entries: BrowseEntry[];
+}
+
+export interface QuickAddPayload {
+  unitId: number;
+  cameraLabel: string;
+  directory: string;
+}
+
+export interface QuickAddResponse {
+  group: VideoGroup;
+  source: string;
 }
 
 export interface CreateVideoGroupPayload {
@@ -285,7 +324,80 @@ export type UpdateVideoGroupPayload = Partial<{
 export async function fetchVideoStatus(): Promise<VideoStatus> {
   const res = await fetch(`${BASE}/api/videos/status`);
   if (!res.ok) {
-    return { enabled: false, rootDir: '', segmentCount: 0, lastScanAt: '', scanning: false };
+    return {
+      ready: false,
+      enabled: false,
+      sources: [],
+      segmentCount: 0,
+      lastScanAt: '',
+      scanning: false,
+    };
+  }
+  const data = await res.json();
+  return {
+    ready: Boolean(data.ready),
+    enabled: Boolean(data.enabled),
+    sources: Array.isArray(data.sources) ? data.sources : [],
+    segmentCount: Number(data.segmentCount ?? 0),
+    lastScanAt: String(data.lastScanAt ?? ''),
+    scanning: Boolean(data.scanning),
+  };
+}
+
+export async function fetchVideoSources(): Promise<VideoSource[]> {
+  const res = await fetch(`${BASE}/api/videos/sources`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.sources ?? []) as VideoSource[];
+}
+
+export async function addVideoSource(path: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/videos/sources`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Add video source failed');
+  }
+  const data = await res.json();
+  return String(data.path);
+}
+
+export async function deleteVideoSource(path: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/videos/sources?path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Delete video source failed');
+  }
+}
+
+export async function browseDirectory(path: string): Promise<BrowseResponse> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+  const res = await fetch(`${BASE}/api/videos/browse${qs}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Browse directory failed');
+  }
+  return res.json();
+}
+
+export async function quickAddVideoSource(
+  gameId: string,
+  payload: QuickAddPayload,
+): Promise<QuickAddResponse> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos/quick-add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Quick add failed');
   }
   return res.json();
 }
@@ -303,7 +415,15 @@ export async function rescanVideos(): Promise<VideoStatus> {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || 'Rescan failed');
   }
-  return res.json();
+  const data = await res.json();
+  return {
+    ready: Boolean(data.ready),
+    enabled: Boolean(data.enabled),
+    sources: Array.isArray(data.sources) ? data.sources : [],
+    segmentCount: Number(data.segmentCount ?? 0),
+    lastScanAt: String(data.lastScanAt ?? ''),
+    scanning: Boolean(data.scanning),
+  };
 }
 
 export async function fetchVideoCandidates(gameId: string): Promise<CandidateGroup[]> {
@@ -361,11 +481,20 @@ export async function deleteVideoGroup(gameId: string, groupId: string): Promise
 }
 
 /**
- * Build a streaming URL for a video segment. The backend accepts path
- * segments separately but requires each of them to be URL-encoded. We
- * encode per-segment to preserve "/" as the path separator.
+ * Build a streaming URL for a video segment. The backend expects a
+ * URL-safe base64 (no padding) of the segment's absolute path, so that
+ * slashes inside the path do not collide with Gin route parameters.
  */
-export function videoStreamUrl(relPath: string): string {
-  const parts = relPath.split('/').map(encodeURIComponent);
-  return `${BASE}/api/video-stream/${parts.join('/')}`;
+export function videoStreamUrl(absPath: string): string {
+  return `${BASE}/api/video-stream/${base64UrlEncode(absPath)}`;
+}
+
+function base64UrlEncode(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const b of bytes) {
+    binary += String.fromCharCode(b);
+  }
+  const b64 = btoa(binary);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }

@@ -222,3 +222,141 @@ export async function saveUnitClasses(gameId: string, classes: Record<string, st
   });
   return res.json();
 }
+
+// ─── Video Sync ─────────────────────────────────────────────────────────────
+
+export interface VideoSegment {
+  relPath: string;
+  startTs: string; // ISO 8601 UTC (from mp4 moov.mvhd creation_time)
+  durationMs: number;
+  codec: string;
+  width: number;
+  height: number;
+  fileSizeBytes: number;
+  fileMTime: string;
+  compatible: boolean;
+}
+
+export interface VideoGroup {
+  id: string;
+  unitId: number;
+  cameraLabel: string;
+  offsetMs: number; // gameMs = videoMs + offsetMs
+  segments: VideoSegment[];
+  createdAt: string;
+  updatedAt: string;
+  notes?: string;
+}
+
+export interface CandidateGroup {
+  autoGroupKey: string;
+  segments: VideoSegment[];
+  totalDurationMs: number;
+  codec: string;
+  compatible: boolean;
+}
+
+export interface VideoStatus {
+  enabled: boolean;
+  rootDir: string;
+  segmentCount: number;
+  lastScanAt: string;
+  scanning: boolean;
+}
+
+export interface CreateVideoGroupPayload {
+  unitId: number;
+  cameraLabel: string;
+  offsetMs: number;
+  segmentRelPaths: string[];
+  notes?: string;
+}
+
+export type UpdateVideoGroupPayload = Partial<{
+  unitId: number;
+  cameraLabel: string;
+  offsetMs: number;
+  notes: string;
+  segmentRelPaths: string[];
+}>;
+
+export async function fetchVideoStatus(): Promise<VideoStatus> {
+  const res = await fetch(`${BASE}/api/videos/status`);
+  if (!res.ok) {
+    return { enabled: false, rootDir: '', segmentCount: 0, lastScanAt: '', scanning: false };
+  }
+  return res.json();
+}
+
+export async function rescanVideos(): Promise<VideoStatus> {
+  const res = await fetch(`${BASE}/api/videos/rescan`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Rescan failed');
+  }
+  return res.json();
+}
+
+export async function fetchVideoCandidates(gameId: string): Promise<CandidateGroup[]> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos/candidates`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.candidates ?? [];
+}
+
+export async function fetchVideoGroups(gameId: string): Promise<VideoGroup[]> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.groups ?? [];
+}
+
+export async function createVideoGroup(gameId: string, payload: CreateVideoGroupPayload): Promise<VideoGroup> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Create video group failed');
+  }
+  return res.json();
+}
+
+export async function updateVideoGroup(
+  gameId: string,
+  groupId: string,
+  patch: UpdateVideoGroupPayload,
+): Promise<VideoGroup> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos/${groupId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Update video group failed');
+  }
+  return res.json();
+}
+
+export async function deleteVideoGroup(gameId: string, groupId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/games/${gameId}/videos/${groupId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Delete video group failed');
+  }
+}
+
+/**
+ * Build a streaming URL for a video segment. The backend accepts path
+ * segments separately but requires each of them to be URL-encoded. We
+ * encode per-segment to preserve "/" as the path separator.
+ */
+export function videoStreamUrl(relPath: string): string {
+  const parts = relPath.split('/').map(encodeURIComponent);
+  return `${BASE}/api/video-stream/${parts.join('/')}`;
+}

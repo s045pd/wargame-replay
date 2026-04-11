@@ -1,3 +1,4 @@
+import { Film } from 'lucide-react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
@@ -7,9 +8,10 @@ import { PlayerSearch } from '../map/PlayerSearch';
 interface TopBarProps {
   onShowShortcuts?: () => void;
   onShowSettings?: () => void;
+  onShowVideoManager?: () => void;
 }
 
-export function TopBar({ onShowShortcuts, onShowSettings }: TopBarProps) {
+export function TopBar({ onShowShortcuts, onShowSettings, onShowVideoManager }: TopBarProps) {
   const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
@@ -52,6 +54,17 @@ export function TopBar({ onShowShortcuts, onShowSettings }: TopBarProps) {
         </>
       )}
       <div className="flex-1" />
+
+      {/* Video manager button — only shown when the feature is enabled */}
+      {onShowVideoManager && (
+        <button
+          onClick={onShowVideoManager}
+          className="w-6 h-6 flex items-center justify-center rounded text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors"
+          title={`${t('video_open')} (V)`}
+        >
+          <Film className="w-3.5 h-3.5" />
+        </button>
+      )}
 
       {/* Settings button */}
       {onShowSettings && (

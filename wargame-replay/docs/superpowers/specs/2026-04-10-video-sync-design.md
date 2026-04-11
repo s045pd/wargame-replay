@@ -1,7 +1,7 @@
 # Video Sync (Multi-Camera Co-Tracking) Design Spec
 
 **Date:** 2026-04-10
-**Status:** Approved — proceeding to implementation
+**Status:** Implemented (Phase 1 shipped in commits 4c48bf4 + 29cfa2d)
 **Author:** designed via brainstorming session
 
 ## Overview
@@ -467,21 +467,32 @@ In the `test-backend` job, after `go test`, start the binary with `-videodir ser
 
 ## Phase 1 Deliverables Checklist
 
-- [ ] `-videodir` flag recognized, scanner runs at startup, logs "N segments indexed"
-- [ ] `/api/videos/status`, `/rescan`, `/games/:id/videos/candidates`, `/games/:id/videos` CRUD, `/video-stream/*` all green with tests
-- [ ] Sidecar `.videos.json` created / updated / deleted atomically; DeleteGame cleans it up
-- [ ] Auto-grouping heuristic recognizes GoPro / DJI style split files
-- [ ] VideoManager drawer enumerates candidates and associated groups
-- [ ] AlignWizard 3-step flow works and writes valid sidecar
-- [ ] Activating a group spawns a FloatingVideoCard
-- [ ] FloatingVideoCard follows `currentTs`, handles play / pause / seek / speed
-- [ ] Segment transitions seamless (next-segment preload)
-- [ ] Selecting a unit auto-activates its groups (toggle in VideoManager)
-- [ ] Incompatible codec / missing file / out-of-range errors are clear, not crashes
-- [ ] Deleting a game removes its `.videos.json`
-- [ ] `go test -race ./...` green, `go vet ./...` green
-- [ ] `npx tsc -b` green, `npm run lint` green
-- [ ] `make build` succeeds and the binary starts
+- [x] `-videodir` flag recognized, scanner runs at startup, logs "N segments indexed"
+- [x] `/api/videos/status`, `/rescan`, `/games/:id/videos/candidates`, `/games/:id/videos` CRUD, `/video-stream/*` all green with tests
+- [x] Sidecar `.videos.json` created / updated / deleted atomically; DeleteGame cleans it up
+- [x] Auto-grouping heuristic recognizes GoPro / DJI style split files
+- [x] VideoManager drawer enumerates candidates and associated groups
+- [x] AlignWizard 3-step flow works and writes valid sidecar
+- [x] Activating a group spawns a FloatingVideoCard
+- [x] FloatingVideoCard follows `currentTs`, handles play / pause / seek / speed
+- [x] Segment transitions seamless (next-segment preload)
+- [x] Selecting a unit auto-activates its groups (toggle in VideoManager)
+- [x] Incompatible codec / missing file / out-of-range errors are clear, not crashes
+- [x] Deleting a game removes its `.videos.json`
+- [x] `go test -race ./...` green, `go vet ./...` green
+- [x] `npx tsc -b` green, `npm run lint` green for all new code
+- [x] `make build` succeeds and the binary starts
+
+**End-to-end verification** (commit 29cfa2d):
+- Real 5h45m `.db` + 3 ffmpeg-generated continuous mp4 segments
+- `/api/videos/status` → enabled, 3 segments indexed
+- `/api/games/:id/videos/candidates` → 1 auto-group with 3 continuous segments
+- POST → valid UUID, complete sidecar JSON with chinese camera label
+- PUT → partial offset update with fresh updatedAt
+- DELETE → `{deleted: id}` and sidecar removed from disk
+- `GET /api/video-stream/<rel>` with `Range: bytes=0-99` → 206 + 100 bytes
+- Path traversal attempts (encoded `..`, absolute, `.`) → 400
+- Nonexistent file → 404
 
 ## Phase 2 Outline
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, RefreshCw } from 'lucide-react';
+import { X, RefreshCw, Layers, PanelRight, LayoutGrid } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
-import { useVideos } from '../store/videos';
+import { useVideos, type LayoutMode } from '../store/videos';
 import { VideoGroupCard } from './VideoGroupCard';
 import { CandidateGroupCard } from './CandidateGroupCard';
 import { AlignWizard } from './AlignWizard';
@@ -28,6 +28,8 @@ export function VideoManager({ open, onClose }: VideoManagerProps) {
   const autoActivate = useVideos((s) => s.autoActivateOnSelect);
   const setAutoActivate = useVideos((s) => s.setAutoActivate);
   const rescan = useVideos((s) => s.rescan);
+  const layoutMode = useVideos((s) => s.layoutMode);
+  const setLayoutMode = useVideos((s) => s.setLayoutMode);
 
   const [wizardCandidate, setWizardCandidate] = useState<CandidateGroup | null>(null);
 
@@ -88,7 +90,7 @@ export function VideoManager({ open, onClose }: VideoManagerProps) {
                 {interpolate(t('video_status'), { count: segmentCount, root: rootDir })}
               </div>
 
-              <label className="mb-4 flex cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/30 p-2 text-xs text-zinc-200">
+              <label className="mb-2 flex cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/30 p-2 text-xs text-zinc-200">
                 <input
                   type="checkbox"
                   checked={autoActivate}
@@ -97,6 +99,33 @@ export function VideoManager({ open, onClose }: VideoManagerProps) {
                 />
                 <span>{t('video_auto_activate')}</span>
               </label>
+
+              <div className="mb-4 flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950/30 p-2">
+                <span className="text-[11px] text-zinc-500">{t('video_layout')}</span>
+                <div className="ml-auto flex items-center gap-0.5">
+                  <LayoutButton
+                    mode="floating"
+                    current={layoutMode}
+                    onSelect={setLayoutMode}
+                    title={t('video_layout_floating')}
+                    icon={<Layers className="h-3.5 w-3.5" />}
+                  />
+                  <LayoutButton
+                    mode="dock-right"
+                    current={layoutMode}
+                    onSelect={setLayoutMode}
+                    title={t('video_layout_dock_right')}
+                    icon={<PanelRight className="h-3.5 w-3.5" />}
+                  />
+                  <LayoutButton
+                    mode="grid-top"
+                    current={layoutMode}
+                    onSelect={setLayoutMode}
+                    title={t('video_layout_grid_top')}
+                    icon={<LayoutGrid className="h-3.5 w-3.5" />}
+                  />
+                </div>
+              </div>
 
               {/* Associated */}
               <div className="mb-4">
@@ -152,5 +181,31 @@ export function VideoManager({ open, onClose }: VideoManagerProps) {
         <AlignWizard candidate={wizardCandidate} onClose={() => setWizardCandidate(null)} />
       )}
     </>
+  );
+}
+
+interface LayoutButtonProps {
+  mode: LayoutMode;
+  current: LayoutMode;
+  onSelect: (mode: LayoutMode) => void;
+  title: string;
+  icon: React.ReactNode;
+}
+
+function LayoutButton({ mode, current, onSelect, title, icon }: LayoutButtonProps) {
+  const active = mode === current;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(mode)}
+      title={title}
+      className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+        active
+          ? 'bg-sky-500/20 text-sky-200'
+          : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+      }`}
+    >
+      {icon}
+    </button>
   );
 }

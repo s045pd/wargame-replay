@@ -186,6 +186,14 @@ func (h *Handler) GetBrowseDirectory(c *gin.Context) {
 		return
 	}
 
+	// Soft total budget for optional per-subfolder probes (symlink
+	// resolution + mp4 count). macOS roots like "/" contain entries
+	// that take seconds each to stat (network mounts, SIP, Time
+	// Machine, /System/Volumes, etc.), so once the budget is used up
+	// we fall back to "directly-reported directories only" and no
+	// counts — still useful, but instant.
+	probeDeadline := time.Now().Add(600 * time.Millisecond)
+
 	subDirs := make([]browseEntry, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
@@ -193,19 +201,29 @@ func (h *Handler) GetBrowseDirectory(c *gin.Context) {
 			continue
 		}
 		child := filepath.Join(abs, name)
-		// Accept real directories OR symlinks that resolve to a directory
-		// (so /tmp → /private/tmp, /var → /private/var on macOS still show up).
-		if !e.IsDir() {
+
+		isDir := e.IsDir()
+		if !isDir {
+			// symlink-to-dir fallback: try only if we still have budget.
+			if time.Now().After(probeDeadline) {
+				continue
+			}
 			info, err := os.Stat(child)
 			if err != nil || !info.IsDir() {
 				continue
 			}
+			isDir = true
+		}
+
+		count := 0
+		if time.Now().Before(probeDeadline) {
+			count = quickCountVideos(child)
 		}
 		subDirs = append(subDirs, browseEntry{
 			Name:       name,
 			Path:       child,
-			IsDir:      true,
-			VideoCount: quickCountVideos(child),
+			IsDir:      isDir,
+			VideoCount: count,
 		})
 	}
 	// Alphabetical for predictability across platforms.

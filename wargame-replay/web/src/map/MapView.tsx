@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import * as mapboxgl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { UnitPosition } from '../lib/api';
+import { UnitPosition, ammoPercent } from '../lib/api';
 import { UnitLayer } from './UnitLayer';
 import { TrailLayer } from './TrailLayer';
 import { BaseCampLayer } from './BaseCampLayer';
@@ -655,20 +655,22 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
                   <span className="text-zinc-400 w-6 text-right">{selectedUnit.hp}</span>
                 </div>
               </div>
-              {/* Ammo bar */}
+              {/* Ammo bar (class-aware percentage) */}
               <div className="mb-1">
                 <div className="flex items-center gap-2">
                   <span className="text-zinc-500 w-6">{t('ammo')}</span>
                   <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                    {(() => { const pct = ammoPercent(selectedUnit.ammo, selectedUnit.class); return (
                     <div
                       className="h-full rounded-full transition-all duration-300"
                       style={{
-                        width: `${Math.min(100, (selectedUnit.ammo / 255) * 100)}%`,
-                        backgroundColor: selectedUnit.ammo > 100 ? '#3b82f6' : selectedUnit.ammo > 40 ? '#eab308' : '#ef4444',
+                        width: `${pct}%`,
+                        backgroundColor: pct > 40 ? '#3b82f6' : pct > 15 ? '#eab308' : '#ef4444',
                       }}
                     />
+                    ); })()}
                   </div>
-                  <span className="text-zinc-400 w-6 text-right">{selectedUnit.ammo}</span>
+                  <span className="text-zinc-400 w-8 text-right text-[11px]">{Math.round(ammoPercent(selectedUnit.ammo, selectedUnit.class))}%</span>
                 </div>
               </div>
               {/* Supply + Revival tokens inline */}

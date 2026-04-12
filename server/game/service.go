@@ -591,14 +591,82 @@ func loadPlayers(db *sql.DB) map[int]string {
 	return players
 }
 
+// deduplicatePlayers merges device IDs that belong to the same player
+// (identified by sharing a TagText/name) using union-find, and returns
+// a mapping from every device ID to its canonical (primary) device ID.
+func deduplicatePlayers(db *sql.DB) map[int]int {
+	rows, err := db.Query("SELECT SrcIndex, TagText FROM tag WHERE SrcType=1 AND TagText <> ''")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	nameDevices := map[string][]int{}
+	allDevices := map[int]bool{}
+	for rows.Next() {
+		var idx int
+		var name string
+		if err := rows.Scan(&idx, &name); err != nil {
+			continue
+		}
+		nameDevices[name] = append(nameDevices[name], idx)
+		allDevices[idx] = true
+	}
+
+	parent := map[int]int{}
+	for idx := range allDevices {
+		parent[idx] = idx
+	}
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	for _, devices := range nameDevices {
+		for i := 1; i < len(devices); i++ {
+			ra, rb := find(devices[0]), find(devices[i])
+			if ra != rb {
+				parent[ra] = rb
+			}
+		}
+	}
+
+	// Map every device to its root.
+	canonical := map[int]int{}
+	for idx := range allDevices {
+		canonical[idx] = find(idx)
+	}
+	return canonical
+}
+
 func buildPlayerList(players map[int]string) []PlayerInfo {
-	list := make([]PlayerInfo, 0, len(players))
+	// Deduplicate: group device IDs by name, keep one entry per unique player.
+	nameToIDs := map[string][]int{}
 	for id, name := range players {
+		nameToIDs[name] = append(nameToIDs[name], id)
+	}
+
+	seen := map[string]bool{}
+	list := make([]PlayerInfo, 0, len(nameToIDs))
+	for name, ids := range nameToIDs {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		// Use the first (lowest) ID as primary.
+		primaryID := ids[0]
+		for _, id := range ids[1:] {
+			if id < primaryID {
+				primaryID = id
+			}
+		}
 		team := "red"
-		if id >= 500 {
+		if primaryID >= 500 {
 			team = "blue"
 		}
-		list = append(list, PlayerInfo{ID: id, Name: name, Team: team})
+		list = append(list, PlayerInfo{ID: primaryID, Name: name, Team: team})
 	}
 	return list
 }

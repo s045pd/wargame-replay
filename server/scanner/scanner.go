@@ -90,14 +90,62 @@ func ScanDirectory(dir string) ([]GameInfo, error) {
 	return games, nil
 }
 
-// ReadPlayerCount opens the database at dbPath and returns the distinct player count.
+// ReadPlayerCount opens the database at dbPath and returns the deduplicated
+// player count. Players who switch devices mid-game get new SrcIndex values;
+// this function merges them via shared TagText (player name) using union-find.
 func ReadPlayerCount(dbPath string) (int, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
-	var count int
-	err = db.QueryRow("SELECT COUNT(DISTINCT SrcIndex) FROM tag WHERE SrcType=1 AND TagText <> ''").Scan(&count)
-	return count, err
+
+	rows, err := db.Query("SELECT SrcIndex, TagText FROM tag WHERE SrcType=1 AND TagText <> ''")
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	// Collect name→devices and device→name mappings.
+	nameDevices := map[string][]int{}
+	allDevices := map[int]bool{}
+	for rows.Next() {
+		var idx int
+		var name string
+		if err := rows.Scan(&idx, &name); err != nil {
+			continue
+		}
+		nameDevices[name] = append(nameDevices[name], idx)
+		allDevices[idx] = true
+	}
+
+	// Union-find: merge devices that share a name.
+	parent := map[int]int{}
+	for idx := range allDevices {
+		parent[idx] = idx
+	}
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[ra] = rb
+		}
+	}
+	for _, devices := range nameDevices {
+		for i := 1; i < len(devices); i++ {
+			union(devices[0], devices[i])
+		}
+	}
+
+	roots := map[int]bool{}
+	for idx := range allDevices {
+		roots[find(idx)] = true
+	}
+	return len(roots), nil
 }

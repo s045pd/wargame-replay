@@ -33,6 +33,12 @@ func AutoGroup(entries []IndexEntry) []CandidateGroup {
 		if pi != pj {
 			return pi < pj
 		}
+		// Group by resolution so mixed-resolution cameras (RunCam _M_ vs _S_)
+		// do not interleave and break continuity.
+		ri, rj := sorted[i].Width*sorted[i].Height, sorted[j].Width*sorted[j].Height
+		if ri != rj {
+			return ri > rj // larger resolution first
+		}
 		return sorted[i].StartTs.Before(sorted[j].StartTs)
 	})
 

@@ -156,7 +156,9 @@ export function FloatingVideoCard({ groupId, index }: FloatingVideoCardProps) {
         ? { icon: '⚠', text: '浏览器不支持该编码 — 需用 ffmpeg 转为 H.264' }
         : mode === 'error'
           ? { icon: '⚠', text: '视频加载失败 — 文件可能已移动' }
-          : null;
+          : mode === 'transcoding'
+            ? { icon: '⟳', text: '实时转码中…' }
+            : null;
 
   return (
     <div

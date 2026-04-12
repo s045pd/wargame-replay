@@ -108,10 +108,11 @@ export function useHotspotDirector() {
   const { allHotspots: hotspots, currentTs, playing, coordMode, speed } = usePlayback();
   const { autoMode } = useDirector();
   const manualOverride = useDirector(s => s.manualOverride);
-  const { typeFilters } = useHotspotFilter();
+  const { masterEnabled, typeFilters } = useHotspotFilter();
 
   // ── Pre-compute parsed timestamps + filters ──
   const parsedHotspots = useMemo(() => {
+    if (!masterEnabled) return [];
     const result: ParsedHotspot[] = [];
     for (const hs of hotspots) {
       if (!typeFilters[hs.type as keyof typeof typeFilters]) continue;
@@ -123,7 +124,7 @@ export function useHotspotDirector() {
       });
     }
     return result;
-  }, [hotspots, typeFilters]);
+  }, [hotspots, masterEnabled, typeFilters]);
 
   // ── Refs (local tracking state, invisible to React) ──
   const lastHotspotIdRef = useRef<number | null>(null);

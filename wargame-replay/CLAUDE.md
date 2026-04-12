@@ -184,6 +184,49 @@ kill %1
 4. Add icon/color in `map/HotspotLayer.tsx`
 5. Add i18n key in `lib/i18n.ts`
 
+## Branch Feature Matrix
+
+This project ships on two branches. When implementing features or fixing bugs, check which branch(es) the change applies to:
+
+### `main` — Local single-binary deployment (Go backend + embedded frontend)
+
+Features **exclusive to `main`**:
+- **Video sync (real-time transcoding)**: HEVC→H.264 on-the-fly via `ffmpeg` subprocess. Requires the Go binary running locally with access to the filesystem and ffmpeg. Frontend code in `web/src/video/VideoEngine.tsx` adds `?transcode=1&seek=N` for incompatible codecs.
+- **Video source management**: Multi-source scanner (`server/video/`), directory browser API (`/api/videos/browse`), quick-add flow, sources persistence. All require the Go backend.
+- **Video streaming**: `/api/video-stream/:token` — streams local files via HTTP Range or ffmpeg pipe. Needs local filesystem access.
+- **File upload**: `POST /api/upload` for `.db` + `.txt` files writes to the local `-dir` directory.
+
+### `gh-pages` — Static GitHub Pages deployment (frontend only)
+
+Features **exclusive to `gh-pages`**:
+- **Upload to GitHub**: `.db` and `.txt` files are uploaded to the GitHub repository via the GitHub API (no Go backend).
+- **Static data loading**: Games are loaded from a predefined JSON manifest rather than scanned at runtime.
+
+### Both branches (changes must be applied to **both**)
+
+- **Hotspot system**: `store/hotspotFilter.ts`, `map/HotspotControlPanel.tsx`, `timeline/HotspotTrack.tsx`, `hooks/useHotspotDirector.ts`, `map/HotspotLayer.tsx`, `map/HotspotActivityCircle.tsx` — all hotspot UI, filtering, master toggle, and **personal hotspot events** are pure frontend.
+- **Personal hotspot mode**: When following a unit, the hotspot track switches to personal events (kill/hit/killed/hit_recv/heal/revive). This is entirely in `web/src/` and applies to both branches.
+- **Map layers**: `UnitLayer`, `TrailLayer`, `POILayer`, `BaseCampLayer`, `BombingLayer`, `GraticuleLayer`, `SniperTracerLayer`, etc.
+- **Director mode**: `store/director.ts`, `hooks/useHotspotDirector.ts`, `director/DirectorPanel.tsx`
+- **Clips & bookmarks UI**: `store/clips.ts`, `clips/BookmarkList.tsx`, `clips/ClipEditor.tsx`
+- **Player search**: `map/PlayerSearch.tsx`
+- **i18n**: `lib/i18n.ts` — all translation keys
+- **Timeline**: `timeline/Timeline.tsx`, `timeline/HotspotTrack.tsx`, `timeline/TransportControls.tsx`
+- **Settings**: `components/settings/`
+- **Visual config**: `store/visualConfig.ts`
+
+### Decision guide
+
+| Change type | Apply to |
+|---|---|
+| Pure `web/src/` UI/store/component | **Both** branches |
+| `server/` Go code | **main** only |
+| Video sync (`web/src/video/`) | **main** only (depends on Go APIs) |
+| Video sync UI that reads only from store (FloatingVideoCard, LayoutCell) | **main** only |
+| Upload flow that uses GitHub API | **gh-pages** only |
+| Upload flow that uses `POST /api/upload` | **main** only |
+| Hotspot / director / map layer changes | **Both** branches |
+
 ### Regenerating Windows resources
 
 ```bash

@@ -310,6 +310,16 @@ func walkOneSource(
 			log.Printf("video: parse %s: %v", path, err)
 			return nil
 		}
+		// Fallback: if the mp4 moov box has no creation_time (e.g. RunCam,
+		// some action cameras), try to extract a timestamp from the filename.
+		// Also fall back to file mtime as a last resort.
+		if meta.CreationTime.IsZero() || meta.CreationTime.Year() < 2000 {
+			if fnTs := parseFilenameTimestamp(filepath.Base(path)); !fnTs.IsZero() {
+				meta.CreationTime = fnTs
+			} else {
+				meta.CreationTime = mtimeUTC
+			}
+		}
 		entry := IndexEntry{
 			AbsPath:       absPath,
 			StartTs:       meta.CreationTime,
@@ -335,6 +345,60 @@ func isVideoExt(path string) bool {
 		return true
 	}
 	return false
+}
+
+// parseFilenameTimestamp attempts to extract a recording start time from a
+// video filename. Many action cameras that do not write moov.mvhd
+// creation_time still embed the timestamp in the filename:
+//
+//   RunCam:   Helmetcam2_0001_M_20260328113700.MP4
+//   Generic:  VID_20260328_113700.mp4
+//   DJI:      DJI_20260328113700_0001.MP4
+//
+// The function searches for the first occurrence of a YYYYMMDDHHMMSS (14-digit)
+// or YYYYMMDD_HHMMSS (15-char) pattern and parses it as local time (matching
+// the game timestamp convention).
+func parseFilenameTimestamp(basename string) time.Time {
+	// Strip extension.
+	name := strings.TrimSuffix(basename, filepath.Ext(basename))
+
+	// Try to find a 14-digit run that looks like YYYYMMDDHHmmss.
+	digits := make([]byte, 0, 14)
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= '0' && c <= '9' {
+			digits = append(digits, c)
+			if len(digits) == 14 {
+				break
+			}
+		} else {
+			// Allow a single underscore/hyphen/space between date and time
+			// (e.g. "20260328_113700") without resetting.
+			if len(digits) == 8 && (c == '_' || c == '-' || c == ' ') {
+				continue
+			}
+			if len(digits) > 0 && len(digits) < 8 {
+				// Not enough for a date yet — reset.
+				digits = digits[:0]
+			} else if len(digits) >= 8 && len(digits) < 14 {
+				// Had date but interrupted before time — reset.
+				digits = digits[:0]
+			}
+		}
+	}
+	if len(digits) < 14 {
+		return time.Time{}
+	}
+	s := string(digits)
+	t, err := time.ParseInLocation("20060102150405", s, time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	// Sanity: reject dates before 2010 or after 2040.
+	if t.Year() < 2010 || t.Year() > 2040 {
+		return time.Time{}
+	}
+	return t
 }
 
 // canonicalizeDir resolves a user-provided path to an absolute, cleaned

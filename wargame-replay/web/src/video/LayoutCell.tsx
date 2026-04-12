@@ -52,7 +52,9 @@ export function LayoutCell({ groupId, mode }: LayoutCellProps) {
         ? { icon: '⚠', text: '编码不兼容' }
         : cardMode === 'error'
           ? { icon: '⚠', text: '文件丢失' }
-          : null;
+          : cardMode === 'transcoding'
+            ? { icon: '⟳', text: '转码中…' }
+            : null;
 
   const cellClasses =
     mode === 'dock-right'

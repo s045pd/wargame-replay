@@ -2,12 +2,12 @@ import { useEffect, useRef, useMemo, useState } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useVisualConfig } from '../store/visualConfig';
-import { useHotspotFilter } from '../store/hotspotFilter';
+import { useHotspotFilter, type PersonalEventType } from '../store/hotspotFilter';
 import { isFreeTileStyle } from '../map/styles';
 import { useI18n } from '../lib/i18n';
-import { HotspotEvent } from '../lib/api';
+import type { HotspotEvent, GameEvent } from '../lib/api';
 
-/** Colour per hotspot type */
+/** Colour per global hotspot type */
 const TYPE_COLORS: Record<string, string> = {
   firefight:     '#ff9900',
   killstreak:    '#ff3322',
@@ -18,7 +18,17 @@ const TYPE_COLORS: Record<string, string> = {
 };
 const DEFAULT_COLOR = '#ff9900';
 
-/** Type label for display */
+/** Colour per personal event type */
+const PERSONAL_TYPE_COLORS: Record<PersonalEventType, string> = {
+  p_kill:     '#22cc44',
+  p_hit:      '#66bb66',
+  p_killed:   '#ff3333',
+  p_hit_recv: '#ff8866',
+  p_heal:     '#44aaff',
+  p_revive:   '#aa66ff',
+};
+
+/** Type label for display (global) */
 const TYPE_LABELS: Record<string, string> = {
   firefight:     '交火',
   killstreak:    '连杀',
@@ -37,6 +47,43 @@ function formatHHMMSS(ts: string): string {
   return ts.slice(11, 19);
 }
 
+// ── Personal Event helpers ──
+
+interface PersonalEvent {
+  type: PersonalEventType;
+  ts: string;
+  tsMs: number;
+  name: string;
+  event: GameEvent;
+}
+
+function buildPersonalEvents(allKills: GameEvent[], unitId: number): PersonalEvent[] {
+  const result: PersonalEvent[] = [];
+  for (const ev of allKills) {
+    if (ev.type === 'kill' && ev.src === unitId) {
+      result.push({ type: 'p_kill', ts: ev.ts, tsMs: parseTs(ev.ts), name: ev.dstName ?? '', event: ev });
+    }
+    if (ev.type === 'kill' && ev.dst === unitId) {
+      result.push({ type: 'p_killed', ts: ev.ts, tsMs: parseTs(ev.ts), name: ev.srcName ?? '', event: ev });
+    }
+    if (ev.type === 'hit' && ev.src === unitId) {
+      result.push({ type: 'p_hit', ts: ev.ts, tsMs: parseTs(ev.ts), name: ev.dstName ?? '', event: ev });
+    }
+    if (ev.type === 'hit' && ev.dst === unitId) {
+      result.push({ type: 'p_hit_recv', ts: ev.ts, tsMs: parseTs(ev.ts), name: ev.srcName ?? '', event: ev });
+    }
+    if (ev.type === 'heal' && (ev.src === unitId || ev.dst === unitId)) {
+      result.push({ type: 'p_heal', ts: ev.ts, tsMs: parseTs(ev.ts), name: (ev.src === unitId ? ev.dstName : ev.srcName) ?? '', event: ev });
+    }
+    if (ev.type === 'revive' && (ev.src === unitId || ev.dst === unitId)) {
+      result.push({ type: 'p_revive', ts: ev.ts, tsMs: parseTs(ev.ts), name: (ev.src === unitId ? ev.dstName : ev.srcName) ?? '', event: ev });
+    }
+  }
+  return result;
+}
+
+// ── Component ──
+
 interface HotspotTrackProps {
   height: number;
   labelWidth: number;
@@ -45,16 +92,28 @@ interface HotspotTrackProps {
 export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { meta, allHotspots: rawHotspots, currentTs, seek } = usePlayback();
-  const { typeFilters } = useHotspotFilter();
+  const { meta, allHotspots: rawHotspots, allKills, currentTs, seek, selectedUnitId, followSelectedUnit, manualFollow } = usePlayback();
+  const { masterEnabled, typeFilters, personalTypeFilters } = useHotspotFilter();
   const { t } = useI18n();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; hs: HotspotEvent } | null>(null);
+  const [personalTooltip, setPersonalTooltip] = useState<{ x: number; y: number; pe: PersonalEvent } | null>(null);
 
-  // Filter hotspots by enabled types
+  const isPersonalMode = selectedUnitId !== null && followSelectedUnit && manualFollow;
+
+  // Filter global hotspots
   const hotspots = useMemo(
-    () => rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters]),
-    [rawHotspots, typeFilters],
+    () => masterEnabled
+      ? rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters])
+      : [],
+    [rawHotspots, masterEnabled, typeFilters],
   );
+
+  // Build + filter personal events
+  const personalEvents = useMemo(() => {
+    if (!isPersonalMode || !masterEnabled || selectedUnitId === null) return [];
+    const all = buildPersonalEvents(allKills, selectedUnitId);
+    return all.filter((pe) => personalTypeFilters[pe.type]);
+  }, [isPersonalMode, masterEnabled, allKills, selectedUnitId, personalTypeFilters]);
 
   const startMs = useMemo(() => (meta ? parseTs(meta.startTime) : 0), [meta]);
   const endMs = useMemo(() => (meta ? parseTs(meta.endTime) : 0), [meta]);
@@ -66,7 +125,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     [hotspots],
   );
 
-  // Draw hotspot bars on canvas
+  // Draw on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !meta || totalMs <= 0) return;
@@ -86,6 +145,29 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
     const curMs = currentTs ? parseTs(currentTs) : startMs;
 
+    if (isPersonalMode) {
+      // ── Personal events: vertical tick marks ──
+      for (const pe of personalEvents) {
+        const x = ((pe.tsMs - startMs) / totalMs) * w;
+        const color = PERSONAL_TYPE_COLORS[pe.type];
+        const isNear = curMs >= pe.tsMs - 2000 && curMs <= pe.tsMs + 2000;
+
+        ctx.fillStyle = color;
+        ctx.globalAlpha = isNear ? 0.9 : 0.3;
+        // Thin vertical bar
+        ctx.fillRect(x - 1, 2, 2, h - 4);
+
+        // Brighter top marker for nearby events
+        if (isNear) {
+          ctx.globalAlpha = 1;
+          ctx.fillRect(x - 2, 0, 4, 4);
+        }
+        ctx.globalAlpha = 1;
+      }
+      return;
+    }
+
+    // ── Global hotspot bars ──
     for (const hs of sortedHotspots) {
       const hsStart = parseTs(hs.startTs);
       const hsEnd = parseTs(hs.endTs);
@@ -98,21 +180,18 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
       const color = TYPE_COLORS[hs.type] || DEFAULT_COLOR;
       const isActive = curMs >= hsStart && curMs <= hsEnd;
 
-      // Bar
       ctx.fillStyle = color;
       ctx.globalAlpha = isActive ? 0.95 : 0.3;
       const barY = 2;
       const barH = h - 4;
       ctx.fillRect(x1, barY, barW, barH);
 
-      // Bright border for active
       if (isActive) {
         ctx.strokeStyle = color;
         ctx.globalAlpha = 1;
         ctx.lineWidth = 1;
         ctx.strokeRect(x1, barY, barW, barH);
 
-        // Peak tick
         const peakX = ((hsPeak - startMs) / totalMs) * w;
         ctx.fillStyle = '#ffffff';
         ctx.globalAlpha = 0.8;
@@ -121,21 +200,20 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
       ctx.globalAlpha = 1;
     }
-  }, [meta, sortedHotspots, currentTs, startMs, endMs, totalMs]);
+  }, [meta, isPersonalMode, personalEvents, sortedHotspots, currentTs, startMs, endMs, totalMs]);
 
-  // Resize observer for responsive redraw
+  // Resize observer
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const observer = new ResizeObserver(() => {
-      // Trigger re-render by forcing state update
       canvasRef.current?.dispatchEvent(new Event('resize'));
     });
     observer.observe(canvas);
     return () => observer.disconnect();
   }, []);
 
-  // Click to seek to hotspot peak time + fly camera there
+  // Click handler
   const handleClick = (e: React.MouseEvent) => {
     if (!meta || totalMs <= 0 || !containerRef.current) return;
 
@@ -147,7 +225,26 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     const ratio = Math.max(0, Math.min(1, x / canvasWidth));
     const clickMs = startMs + ratio * totalMs;
 
-    // Find the hotspot at this position (pick highest score if overlap)
+    if (isPersonalMode) {
+      // Find nearest personal event
+      let closest: PersonalEvent | null = null;
+      let closestDist = Infinity;
+      for (const pe of personalEvents) {
+        const dist = Math.abs(pe.tsMs - clickMs);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = pe;
+        }
+      }
+      if (closest && closestDist < totalMs * 0.02) {
+        seek(closest.ts);
+      } else {
+        seekToMs(clickMs, seek);
+      }
+      return;
+    }
+
+    // Global hotspot click
     let best: HotspotEvent | null = null;
     for (const hs of hotspots) {
       const hsStart = parseTs(hs.startTs);
@@ -160,7 +257,6 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     }
 
     if (best) {
-      // Seek to peak time and fly camera there
       seek(best.peakTs);
       if (best.centerLat !== 0 || best.centerLng !== 0) {
         const vc = useVisualConfig.getState();
@@ -175,11 +271,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
         });
       }
     } else {
-      // No hotspot — seek to clicked time
-      const d = new Date(clickMs);
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      seek(ts);
+      seekToMs(clickMs, seek);
     }
   };
 
@@ -195,6 +287,26 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     const ratio = Math.max(0, Math.min(1, x / canvasWidth));
     const hoverMs = startMs + ratio * totalMs;
 
+    if (isPersonalMode) {
+      let closest: PersonalEvent | null = null;
+      let closestDist = Infinity;
+      for (const pe of personalEvents) {
+        const dist = Math.abs(pe.tsMs - hoverMs);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = pe;
+        }
+      }
+      if (closest && closestDist < totalMs * 0.01) {
+        setPersonalTooltip({ x: e.clientX, y: rect.top, pe: closest });
+      } else {
+        setPersonalTooltip(null);
+      }
+      setTooltip(null);
+      return;
+    }
+
+    // Global hotspot hover
     let best: HotspotEvent | null = null;
     for (const hs of hotspots) {
       const hsStart = parseTs(hs.startTs);
@@ -205,24 +317,29 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
         }
       }
     }
-
     if (best) {
       setTooltip({ x: e.clientX, y: rect.top, hs: best });
     } else {
       setTooltip(null);
     }
+    setPersonalTooltip(null);
   };
 
-  const handleMouseLeave = () => setTooltip(null);
+  const handleMouseLeave = () => {
+    setTooltip(null);
+    setPersonalTooltip(null);
+  };
+
+  const labelColor = isPersonalMode ? '#22cc88' : '#ef4444';
 
   return (
     <div className="flex items-stretch border-b border-zinc-800" style={{ height }}>
       {/* Label sidebar */}
       <div
         className="shrink-0 flex items-center px-2 text-[10px] font-medium tracking-wider uppercase border-r border-zinc-800"
-        style={{ width: labelWidth, color: '#ef4444', borderLeftColor: '#ef4444', borderLeftWidth: 2 }}
+        style={{ width: labelWidth, color: labelColor, borderLeftColor: labelColor, borderLeftWidth: 2 }}
       >
-        {t('hotspot')}
+        {isPersonalMode ? t('personal_events') : t('hotspot')}
       </div>
       {/* Canvas */}
       <div
@@ -239,7 +356,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
         />
       </div>
 
-      {/* Tooltip */}
+      {/* Global hotspot tooltip */}
       {tooltip && (
         <div
           className="fixed z-50 bg-zinc-900/95 border border-zinc-600 rounded px-2 py-1.5 text-xs font-mono text-zinc-200 pointer-events-none backdrop-blur-sm shadow-lg"
@@ -262,6 +379,34 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
           </div>
         </div>
       )}
+
+      {/* Personal event tooltip */}
+      {personalTooltip && (
+        <div
+          className="fixed z-50 bg-zinc-900/95 border border-zinc-600 rounded px-2 py-1.5 text-xs font-mono text-zinc-200 pointer-events-none backdrop-blur-sm shadow-lg"
+          style={{ left: personalTooltip.x + 8, top: personalTooltip.y - 48 }}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className="w-2 h-2 rounded-full inline-block"
+              style={{ backgroundColor: PERSONAL_TYPE_COLORS[personalTooltip.pe.type] }}
+            />
+            <span className="font-bold">{t(personalTooltip.pe.type)}</span>
+          </div>
+          <div className="text-zinc-400 text-[10px] mt-0.5">
+            {personalTooltip.pe.name && `${personalTooltip.pe.name} · `}
+            {formatHHMMSS(personalTooltip.pe.ts)}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+/** Convert a unix ms to game timestamp string and seek. */
+function seekToMs(ms: number, seek: (ts: string) => void): void {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  seek(ts);
 }

@@ -19,7 +19,7 @@ export function registerVideoElement(groupId: string, el: HTMLVideoElement | nul
 }
 
 /** Placeholder display state per group for the card UI to consume. */
-export type VideoCardMode = 'ready' | 'out-of-range' | 'error' | 'incompatible';
+export type VideoCardMode = 'ready' | 'out-of-range' | 'error' | 'incompatible' | 'transcoding';
 
 const cardModes = new Map<string, VideoCardMode>();
 const cardModeSubscribers = new Map<string, Set<() => void>>();
@@ -105,11 +105,61 @@ function syncOne(group: VideoGroup, currentTs: string, playing: boolean, speed: 
   }
 
   const { segment, index, segStartMs } = hit;
-  if (!segment.compatible) {
-    setCardMode(group.id, 'incompatible');
+  const needsTranscode = !segment.compatible;
+  const targetLocal = (videoMs - segStartMs) / 1000;
+
+  if (needsTranscode) {
+    // ── Real-time transcoding path ──
+    // ffmpeg streams fragmented MP4 from a seek point. Restarting ffmpeg
+    // is expensive (~1-2s cold start), so we only restart on:
+    //   1. First load (no src set yet)
+    //   2. Segment changed (different file)
+    //   3. Catastrophic drift (>60s behind — user probably did a manual seek)
+    //
+    // For normal playback, ffmpeg runs continuously and the <video> plays
+    // at its own pace. Small drift (5-30s) is acceptable — the video is
+    // "close enough" to the game clock. This avoids the stop-start
+    // stuttering that killed usability at any speed.
+
+    const seekSec = Math.max(0, Math.floor(targetLocal));
+    const haveSrc = videoEl.dataset.currentRelPath ?? '';
+    const currentSegPath = haveSrc.split('|')[0] || '';
+    const isNewSegment = currentSegPath !== segment.relPath;
+    const isFirstLoad = haveSrc === '' || !haveSrc.includes('|tc|');
+
+    // Only measure drift when the video has actually loaded some data.
+    const currentDrift = videoEl.readyState >= 1
+      ? Math.abs(videoEl.currentTime - targetLocal)
+      : 0;
+    const isCatastrophicDrift = currentDrift > 60;
+
+    const needsNewStream = isFirstLoad || isNewSegment || isCatastrophicDrift;
+
+    if (needsNewStream) {
+      videoEl.src = videoStreamUrl(segment.relPath) + `?transcode=1&seek=${seekSec}`;
+      videoEl.dataset.currentRelPath = `${segment.relPath}|tc|${seekSec}`;
+      setCardMode(group.id, 'transcoding');
+    }
+
+    if (playing && videoEl.paused) {
+      const p = videoEl.play();
+      if (p) p.catch(() => { /* expected during transcode buffering */ });
+    } else if (!playing && !videoEl.paused) {
+      videoEl.pause();
+    }
+
+    // Let the video play at game speed. The transcode stream is real-time
+    // output, so playbackRate > 1 means the video will gradually outrun
+    // the stream buffer — capped at 2x to avoid starvation.
+    videoEl.playbackRate = clamp(speed, MIN_PLAYBACK_RATE, 2);
+
+    if (videoEl.readyState >= 2) {
+      setCardMode(group.id, 'ready');
+    }
     return;
   }
 
+  // ── Direct streaming path (H.264 / compatible) ──
   const targetSrc = videoStreamUrl(segment.relPath);
   const currentSrc = videoEl.dataset.currentRelPath ?? '';
   if (currentSrc !== segment.relPath) {
@@ -118,10 +168,9 @@ function syncOne(group: VideoGroup, currentTs: string, playing: boolean, speed: 
     setCardMode(group.id, 'ready');
     // Preload the next segment so the transition at end-of-file is seamless.
     const next = group.segments[index + 1];
-    if (next) preloadSegment(videoStreamUrl(next.relPath));
+    if (next && next.compatible) preloadSegment(videoStreamUrl(next.relPath));
   }
 
-  const targetLocal = (videoMs - segStartMs) / 1000;
   const current = videoEl.currentTime;
   if (Number.isFinite(current) && Math.abs(current - targetLocal) > DRIFT_THRESHOLD) {
     try {

@@ -68,12 +68,14 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
     allHotspots,
   } = usePlayback();
 
-  const { debugOverlay, typeFilters } = useHotspotFilter();
+  const { debugOverlay, masterEnabled, typeFilters } = useHotspotFilter();
 
-  // Filter allHotspots by enabled type filters for debug overlay
+  // Filter allHotspots by master switch + per-type filters for debug overlay
   const filteredHotspots = useMemo(
-    () => allHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters]),
-    [allHotspots, typeFilters],
+    () => masterEnabled
+      ? allHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters])
+      : [],
+    [allHotspots, masterEnabled, typeFilters],
   );
 
   // Read targetCamera + activeHotspotId + focusMode + followZoom from director store

@@ -70,6 +70,29 @@ export const UNIT_CLASS_LABELS: Record<UnitClass, string> = {
   sniper: '狙击手',
 };
 
+/**
+ * Per-class ammo constants derived from protocol analysis.
+ * The raw byte (flags[2]) ranges from ~14 (empty) to a class-specific max (full).
+ * - rifle / medic share max 238
+ * - mg / marksman / sniper share max 254
+ */
+export const AMMO_EMPTY = 14;
+export const AMMO_MAX: Record<UnitClass, number> = {
+  rifle: 238,
+  mg: 254,
+  medic: 238,
+  marksman: 254,
+  sniper: 254,
+};
+
+/** Normalise a raw ammo byte to 0-100 % based on unit class. */
+export function ammoPercent(raw: number, cls: UnitClass): number {
+  const max = AMMO_MAX[cls] ?? 254;
+  const range = max - AMMO_EMPTY;
+  if (range <= 0) return 0;
+  return Math.max(0, Math.min(100, ((raw - AMMO_EMPTY) / range) * 100));
+}
+
 export interface UnitPosition {
   id: number;
   lat?: number;

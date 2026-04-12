@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import * as mapboxgl from 'maplibre-gl';
-import { UnitPosition, UnitClass, UNIT_CLASS_LABELS, GameEvent } from '../lib/api';
+import { UnitPosition, UnitClass, UNIT_CLASS_LABELS, GameEvent, ammoPercent } from '../lib/api';
 import { registerUnitIcons, iconName } from './unitIcons';
 import { useI18n } from '../lib/i18n';
 import { useDirector } from '../store/director';
@@ -513,13 +513,15 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
 
       const t = useI18n.getState().t;
       const classLabel = t(unitClass || 'rifle');
+      const cls = (unitClass || 'rifle') as import('../lib/api').UnitClass;
+      const ammoPct = Math.round(ammoPercent(ammo, cls));
       popup
         .setLngLat(coords)
         .setHTML(
           `<div style="font-family: monospace; font-size: 12px; background: #111; color: #eee; padding: 6px 10px; border-radius: 4px; border: 1px solid #333;">
             <div><strong>${name}</strong></div>
             <div><span style="color: ${teamColor(team)}">${team}</span> &middot; ${classLabel}</div>
-            ${alive === 0 ? `<div style="color: #ff4444;">${t('kia')}</div>` : `<div>${t('hp')}: ${hp}/100 &middot; ${t('ammo')}: ${ammo} &middot; ${t('supply')}: ${supply} &middot; ${t('revival_tokens')}: ${revivalTokens}</div>`}
+            ${alive === 0 ? `<div style="color: #ff4444;">${t('kia')}</div>` : `<div>${t('hp')}: ${hp}/100 &middot; ${t('ammo')}: ${ammoPct}% &middot; ${t('supply')}: ${supply} &middot; ${t('revival_tokens')}: ${revivalTokens}</div>`}
           </div>`
         )
         .addTo(map);

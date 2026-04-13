@@ -45,6 +45,7 @@ type GameMeta struct {
 	BaseCamps     []decoder.BaseCamp     `json:"baseCamps,omitempty"`
 	Graticule     *Graticule             `json:"graticule,omitempty"`
 	BombingEvents []decoder.BombingEvent `json:"bombingEvents,omitempty"`
+	Minefields    []decoder.Minefield    `json:"minefields,omitempty"`
 }
 
 type Frame struct {
@@ -147,6 +148,11 @@ func LoadGame(dbPath string) (*Service, error) {
 			bombEvents[i].Lng = lng
 		}
 		gameMeta.BombingEvents = bombEvents
+	}
+
+	// Load minefield zone polygons (SrcType=64, DataType=1)
+	if minefields := decoder.LoadMinefields(db, resolver); len(minefields) > 0 {
+		gameMeta.Minefields = minefields
 	}
 
 	ucfg := LoadUnitClassConfig(dbPath)

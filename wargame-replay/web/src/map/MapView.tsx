@@ -6,6 +6,7 @@ import { UnitLayer } from './UnitLayer';
 import { TrailLayer } from './TrailLayer';
 import { BaseCampLayer } from './BaseCampLayer';
 import { GraticuleLayer } from './GraticuleLayer';
+import { MinefieldLayer } from './MinefieldLayer';
 import { BombingLayer } from './BombingLayer';
 import { POILayer } from './POILayer';
 import { HotspotLayer } from './HotspotLayer';
@@ -495,6 +496,13 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
               map={mapRef.current}
               graticule={meta.graticule}
               bounds={meta.bounds}
+            />
+          )}
+          {/* Minefield danger zones */}
+          {meta?.minefields && meta.minefields.length > 0 && (
+            <MinefieldLayer
+              map={mapRef.current}
+              minefields={meta.minefields}
             />
           )}
           {/* Base camp markers */}

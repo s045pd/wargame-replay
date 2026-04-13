@@ -76,6 +76,12 @@ type POIObject struct {
 	BlueHeld   int `json:"blueHeld,omitempty"`   // Blue held time secs (type 4)
 }
 
+// Minefield is a polygon zone (typically a quadrilateral) parsed from DT1 SrcType=64 records.
+type Minefield struct {
+	ID      int         `json:"id"`
+	Corners [][2]float64 `json:"corners"` // [[lat, lng], ...] WGS84, 4 corners
+}
+
 type CoordMode string
 
 const (

@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 )
@@ -119,6 +120,52 @@ func DecodeDT8POIs(data []byte) []POIObject {
 		pois = append(pois, poi)
 	}
 	return pois
+}
+
+// LoadMinefields loads minefield zone polygons from SrcType=64 DataType=1 records.
+// Each 37-byte entry encodes a quadrilateral: [header(1)][0x32(1)][pad(3)][4×(lat4+lng4)].
+// Coordinates use the same WGS84 encoding as position frames.
+func LoadMinefields(db *sql.DB, resolver CoordResolver) []Minefield {
+	// Find the largest DT1/ST64 record (contains all zones when fully initialized)
+	var blob []byte
+	err := db.QueryRow(
+		`SELECT LogData FROM record
+		 WHERE SrcType=64 AND DataType=1 AND LogData IS NOT NULL
+		 ORDER BY length(LogData) DESC LIMIT 1`,
+	).Scan(&blob)
+	if err != nil || len(blob) < 37 {
+		return nil
+	}
+
+	const entryLen = 37
+	const coordOff = 5 // header(1) + byte1(1) + pad(3)
+	count := len(blob) / entryLen
+	zones := make([]Minefield, 0, count)
+
+	for i := 0; i < count; i++ {
+		entry := blob[i*entryLen : (i+1)*entryLen]
+		var corners [4][2]float64
+		valid := true
+		for c := 0; c < 4; c++ {
+			off := coordOff + c*8
+			rawLat := binary.LittleEndian.Uint32(entry[off : off+4])
+			rawLng := binary.LittleEndian.Uint32(entry[off+4 : off+8])
+			if rawLat == 0 && rawLng == 0 {
+				valid = false
+				break
+			}
+			lat, lng := resolver.Convert(rawLat, rawLng)
+			corners[c] = [2]float64{lat, lng}
+		}
+		if !valid {
+			continue
+		}
+		zones = append(zones, Minefield{
+			ID:      int(entry[0] & 0x7F), // strip high bit from header
+			Corners: corners[:],
+		})
+	}
+	return zones
 }
 
 // decodeTeam determines team by unit ID range from the tag table data:

@@ -52,6 +52,11 @@ export interface POIObject {
   blueHeld?: number;   // Blue held time secs (type 4)
 }
 
+export interface Minefield {
+  id: number;
+  corners: [number, number][]; // [[lat, lng], ...] 4 corners
+}
+
 export interface GameMeta {
   coordMode: 'wgs84' | 'relative';
   startTime: string;
@@ -68,6 +73,7 @@ export interface GameMeta {
   baseCamps?: BaseCamp[];
   graticule?: Graticule;
   bombingEvents?: BombingEvent[];
+  minefields?: Minefield[];
 }
 
 export type UnitClass = 'rifle' | 'mg' | 'medic' | 'marksman' | 'sniper';

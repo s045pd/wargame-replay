@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* Override Mapbox GL default popup chrome for unit tooltips */
+.unit-popup .mapboxgl-popup-content {
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+.unit-popup .mapboxgl-popup-tip {
+  display: none;
+}

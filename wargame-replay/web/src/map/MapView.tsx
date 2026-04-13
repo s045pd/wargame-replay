@@ -673,9 +673,10 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
                   <span className="text-zinc-400 w-8 text-right text-[11px]">{Math.round(ammoPercent(selectedUnit.ammo, selectedUnit.class))}%</span>
                 </div>
               </div>
-              {/* Supply + Revival tokens inline */}
+              {/* Supply + Bandage + Revival tokens inline */}
               <div className="flex items-center gap-3 mb-1 text-zinc-400">
                 <span><span className="text-zinc-500">{t('supply')}</span> {selectedUnit.supply}</span>
+                <span><span className="text-zinc-500">{t('bandage')}</span> {selectedUnit.bandage ?? 0}</span>
                 <span><span className="text-zinc-500">{t('revival_tokens')}</span> {selectedUnit.revivalTokens}</span>
               </div>
               <div className="flex items-center gap-2">

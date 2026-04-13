@@ -77,13 +77,13 @@ function computeGridData(
   }
 
   // Row zone labels — absolute index n (0 = northernmost zone from latBegin)
-  // Label: bottom-to-top → 1 at southernmost (n = totalRows-1), ascending northward
+  // Label: top-to-bottom → 1 at northernmost (n = 0), ascending southward
   for (let n = -1; n <= totalRows; n++) {
     const northLat = grat.latBegin - n * grat.latSpace;
     const midLat = northLat - grat.latSpace / 2;
     if (midLat < minLat || midLat > maxLat) continue;
     if (n < 0 || n >= totalRows) continue; // only label zones within the grid
-    rowZones.push({ midLat, label: `${totalRows - n}` });
+    rowZones.push({ midLat, label: `${n + 1}` });
   }
 
   // ── Longitude lines (vertical) — lngBegin is WEST edge, iterate EASTWARD ──
@@ -98,14 +98,14 @@ function computeGridData(
   }
 
   // Column zone labels — absolute index n (0 = westernmost zone from lngBegin)
-  // Label: right-to-left → A at easternmost, ascending westward
-  // n=0 → R (letterLabel(totalCols-1)), n=totalCols-1 → A (letterLabel(0))
+  // Label: left-to-right → A at westernmost, ascending eastward
+  // n=0 → A (letterLabel(0)), n=totalCols-1 → R (letterLabel(totalCols-1))
   for (let n = -1; n <= totalCols; n++) {
     const westLng = grat.lngBegin + n * grat.lngSpace;
     const midLng = westLng + grat.lngSpace / 2;
     if (midLng < minLng || midLng > maxLng) continue;
     if (n < 0 || n >= totalCols) continue;
-    colZones.push({ midLng, label: letterLabel(totalCols - 1 - n) });
+    colZones.push({ midLng, label: letterLabel(n) });
   }
 
   return {

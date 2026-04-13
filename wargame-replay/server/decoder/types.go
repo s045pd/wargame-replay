@@ -23,6 +23,7 @@ type UnitPosition struct {
 	HP            int     `json:"hp"`
 	Ammo          int     `json:"ammo"`
 	Supply        int     `json:"supply"`
+	Bandage       int     `json:"bandage"`
 	RevivalTokens int     `json:"revivalTokens"`
 	Name          string  `json:"name,omitempty"`
 	Class         string  `json:"class"`
@@ -55,13 +56,24 @@ const (
 )
 
 // POIObject is a battlefield point-of-interest parsed from DT8 frames.
+// Field semantics depend on Type — see DecodeDT8POIs for per-type layout.
 type POIObject struct {
 	ID       int     `json:"id"`
 	Type     POIType `json:"type"`
 	Team     int     `json:"team"`     // 0=red, 1=blue, 2=neutral
-	Resource int     `json:"resource"` // HP / supply / capture progress
+	Resource int     `json:"resource"` // legacy: byte[13] raw value
 	Lat      float64 `json:"lat"`
 	Lng      float64 `json:"lng"`
+	// Extended fields (type-specific, omitted when zero)
+	Health     int `json:"health,omitempty"`     // HP % (type 2=兵站, type 5=防御点)
+	Lives      int `json:"lives,omitempty"`      // lives remaining (type 2, 3)
+	Supplies   int `json:"supplies,omitempty"`   // supplies remaining (type 2, 3)
+	RedPct     int `json:"redPct,omitempty"`     // Red capture % (type 3, 4)
+	BluePct    int `json:"bluePct,omitempty"`    // Blue capture % (type 3, 4)
+	BuildTimer int `json:"buildTimer,omitempty"` // building remaining secs (type 2)
+	HeldTime   int `json:"heldTime,omitempty"`   // held/defended time secs (type 5)
+	RedHeld    int `json:"redHeld,omitempty"`    // Red held time secs (type 4)
+	BlueHeld   int `json:"blueHeld,omitempty"`   // Blue held time secs (type 4)
 }
 
 type CoordMode string

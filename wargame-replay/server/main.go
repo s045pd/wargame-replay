@@ -87,6 +87,8 @@ func main() {
 		log.Printf("video: initial scan failed: %v", err)
 	}
 	handler.SetVideoScanner(videoScanner)
+	proxyManager := video.NewProxyManager(*dir)
+	handler.SetProxyManager(proxyManager)
 
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) {
@@ -125,6 +127,10 @@ func main() {
 	r.PUT("/api/games/:id/videos/:groupId", handler.PutVideoGroup)
 	r.DELETE("/api/games/:id/videos/:groupId", handler.DeleteVideoGroup)
 	r.GET("/api/video-stream/:token", handler.StreamVideo)
+	r.POST("/api/video-proxy/:token", handler.PostProxyStart)
+	r.GET("/api/video-proxy/:token/status", handler.GetProxyStatus)
+	r.POST("/api/video-proxy/batch", handler.PostProxyBatch)
+	r.GET("/api/video-proxy/batch-status", handler.GetProxyBatchStatus)
 	r.GET("/ws/games/:id/stream", ws.HandleStream(handler.GetService))
 
 	serveStatic(r)

@@ -35,11 +35,21 @@ export interface BombingEvent {
 
 export interface POIObject {
   id: number;
-  type: number; // 1=base camp, 2=兵站(supply station), 3=supply cache, 4=control point, 5=station
+  type: number; // 1=base camp, 2=兵站(FOB), 3=补给站(supply), 4=控制点(control), 5=防御点(station)
   team: number; // 0=red, 1=blue, 2=neutral
   resource: number;
   lat: number;
   lng: number;
+  // Extended fields (type-specific)
+  health?: number;     // HP % (type 2, 5)
+  lives?: number;      // lives remaining (type 2, 3)
+  supplies?: number;   // supplies remaining (type 2, 3)
+  redPct?: number;     // Red capture % (type 3, 4)
+  bluePct?: number;    // Blue capture % (type 3, 4)
+  buildTimer?: number; // building remaining secs (type 2)
+  heldTime?: number;   // held/defended time secs (type 5)
+  redHeld?: number;    // Red held time secs (type 4)
+  blueHeld?: number;   // Blue held time secs (type 4)
 }
 
 export interface GameMeta {
@@ -104,6 +114,7 @@ export interface UnitPosition {
   hp: number;
   ammo: number;
   supply: number;
+  bandage: number;
   revivalTokens: number;
   name?: string;
   class: UnitClass;
@@ -430,6 +441,36 @@ export async function fetchVideoLibrary(): Promise<VideoSegment[]> {
   if (!res.ok) return [];
   const data = await res.json();
   return data.segments ?? [];
+}
+
+export interface ProxyStatus {
+  state: 'none' | 'queued' | 'running' | 'done' | 'error';
+  progress: number;
+  error?: string;
+  path?: string;
+}
+
+export async function startProxy(absPath: string): Promise<ProxyStatus> {
+  const token = base64UrlEncode(absPath);
+  const res = await fetch(`${BASE}/api/video-proxy/${token}`, { method: 'POST' });
+  return res.json();
+}
+
+export async function getProxyStatus(absPath: string): Promise<ProxyStatus> {
+  const token = base64UrlEncode(absPath);
+  const res = await fetch(`${BASE}/api/video-proxy/${token}/status`);
+  return res.json();
+}
+
+export async function startProxyBatch(gameId: string, unitId?: number): Promise<{ count: number }> {
+  const body: Record<string, unknown> = { gameId };
+  if (unitId !== undefined) body.unitId = unitId;
+  const res = await fetch(`${BASE}/api/video-proxy/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
 }
 
 export async function rescanVideos(): Promise<VideoStatus> {

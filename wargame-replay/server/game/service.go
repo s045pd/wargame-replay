@@ -428,17 +428,18 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 	// Convert map to slice, resolve coordinates, attach names, and reconcile HP.
 	//
 	// HP reconciliation strategy:
-	//   Alive/dead comes from position flags[0] (>0 means alive). This is the
-	//   ground truth for alive/dead status — it reflects revivals that generate
-	//   no explicit event. Position HP defaults to 100 (alive) or 0 (dead).
+	//   Position flags[0] contains the actual HP value (0-100). This is the
+	//   primary source of truth. Position data cycles through all units over
+	//   several seconds, so a unit's HP may lag by a few seconds.
 	//
-	//   The event timeline provides the actual HP values (from hit/kill/heal
-	//   events). When event data is available, it overrides the default HP.
+	//   The event timeline provides more granular timing for HP changes during
+	//   combat. When the latest event is MORE RECENT than the position data,
+	//   the event HP may be more accurate.
 	//
 	//   Conflict resolution:
-	//     - Position says alive + event says HP=0 → unit was revived silently → HP=100
+	//     - Position says alive + event says HP=0 → unit was revived → trust position HP
 	//     - Position says dead + event says HP>0 → killed since last event → HP=0
-	//     - Position says alive + event says HP>0 → trust event HP
+	//     - Otherwise → trust position HP (flags[0])
 	//
 	//   Class comes from position flags[1] (decoded in DecodePositionEntry),
 	//   with unitclasses.json sidecar as a user-override.
@@ -461,9 +462,13 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 			u.Class = override
 		}
 
-		// Reconcile HP with event timeline.
-		// Position data provides alive/dead truth; event timeline provides actual HP.
-		if timeline, ok := s.hpTimeline[int(u.ID)]; ok {
+		// HP reconciliation: position flags[0] is the primary HP source.
+		// Event timeline only overrides when position data is stale and
+		// the event is more recent (e.g. unit was killed between position updates).
+		if !u.Alive {
+			// Position says dead → trust it. HP=0 already set by decoder.
+			u.HP = 0
+		} else if timeline, ok := s.hpTimeline[int(u.ID)]; ok {
 			lo, hi := 0, len(timeline)-1
 			bestIdx := -1
 			for lo <= hi {
@@ -477,17 +482,13 @@ func (s *Service) GetFrame(ts string) (*Frame, error) {
 			}
 			if bestIdx >= 0 {
 				eventHP := timeline[bestIdx].HP
-				if u.Alive {
-					// Position says alive.
-					if eventHP > 0 {
-						// Event agrees alive — use event HP (actual damage value).
-						u.HP = eventHP
-					}
-					// else: event says HP=0 but position says alive →
-					//   unit was revived (silent revival). Keep default HP=100.
-				} else {
-					// Position says dead → trust it. HP=0 already set by decoder.
-					u.HP = 0
+				if eventHP == 0 {
+					// Event says killed but position still says alive →
+					// unit was revived silently. Trust position HP.
+				} else if eventHP < u.HP {
+					// Event shows lower HP than position → position data may be stale,
+					// event is more recent. Use the lower (more recent) value.
+					u.HP = eventHP
 				}
 			}
 		}

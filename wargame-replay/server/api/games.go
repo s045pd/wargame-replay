@@ -16,7 +16,8 @@ type Handler struct {
 	games        []scanner.GameInfo
 	services     map[string]*game.Service // gameID → service
 	dataDir      string
-	videoScanner *video.Scanner // nil or disabled when -videodir not set
+	videoScanner *video.Scanner       // nil or disabled when -videodir not set
+	proxyManager *video.ProxyManager  // nil when video feature is off
 }
 
 func NewHandler(dataDir string) (*Handler, error) {
@@ -41,6 +42,11 @@ func (h *Handler) SetVideoScanner(s *video.Scanner) {
 // VideoScanner returns the configured video scanner (may be nil).
 func (h *Handler) VideoScanner() *video.Scanner {
 	return h.videoScanner
+}
+
+// SetProxyManager wires the proxy manager into the handler.
+func (h *Handler) SetProxyManager(pm *video.ProxyManager) {
+	h.proxyManager = pm
 }
 
 // findGameInfo looks up a game by id without taking a write lock.

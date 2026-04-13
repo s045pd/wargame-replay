@@ -21,17 +21,13 @@ func DecodePositionEntry(data []byte) UnitPosition {
 	flags := make([]byte, 5)
 	copy(flags, data[10:15])
 
-	// flags[0] is an alive/dead indicator: >0 means alive, 0 means dead.
-	// It is NOT the actual HP value — real HP comes from the event timeline.
+	// flags[0] = HP value (0-100). 0 means dead.
 	// flags[1] low 3 bits = unit class: 0=rifle, 1=mg, 2=marksman, 3=sniper, 4=medic
 	// flags[2] = ammo (0-255, depletes on fire, resets on resupply)
-	// flags[3] = supply / grenades (discrete values, depletes in steps of ~5)
+	// flags[3] = bandage (0-255 raw value, similar scaling to ammo)
 	// flags[4] = revival tokens (0-2, decremented on use, resets on resupply)
-	alive := flags[0] > 0
-	hp := 0
-	if alive {
-		hp = 100 // default full HP; service layer overrides with event timeline HP
-	}
+	hp := int(flags[0])
+	alive := hp > 0
 
 	return UnitPosition{
 		ID:            unitID,
@@ -43,7 +39,8 @@ func DecodePositionEntry(data []byte) UnitPosition {
 		Alive:         alive,
 		HP:            hp,
 		Ammo:          int(flags[2]),
-		Supply:        int(flags[3]),
+		Supply:        int((flags[1] >> 3) & 0x1F), // upper 5 bits of class byte
+		Bandage:       int(flags[3]),
 		RevivalTokens: int(flags[4]),
 		Class:         decodeClass(flags),
 	}
@@ -61,6 +58,14 @@ func DecodePositionFrame(data []byte) []UnitPosition {
 
 // DecodeDT8POIs decodes a DataType=8 blob as battlefield POI objects.
 // DT8 entries are 31 bytes each. byte[11] identifies the POI type (1-5).
+//
+// Per-type byte layout (bytes 13-30, relative to entry start):
+//
+//	Type 1 (BaseCamp):  [13]=HP(0xFE=invincible), [14:19]=0xFF
+//	Type 2 (兵站/FOB):  [13]=lives, [15]=supplies, [17]=health%, [21:23 LE]=buildTimer(sec)
+//	Type 3 (补给站):    [13]=lives, [15]=supplies, [17]=redPct, [18]=bluePct, [23:25 LE]=heldTime(sec)
+//	Type 4 (控制点):    [13]=redPct, [14]=bluePct, [15:17 LE]=redHeld(sec), [19:21 LE]=blueHeld(sec)
+//	Type 5 (防御点):    [13]=health%, [14:16 LE]=heldTime(sec)
 func DecodeDT8POIs(data []byte) []POIObject {
 	count := len(data) / dt8EntrySize
 	pois := make([]POIObject, 0, count)
@@ -78,15 +83,40 @@ func DecodeDT8POIs(data []byte) []POIObject {
 		if poiType < POIBaseCamp || poiType > POIStation {
 			continue // not a known POI type
 		}
-		pois = append(pois, POIObject{
+		poi := POIObject{
 			ID:       int(entry[0]),
 			Type:     poiType,
 			Team:     int(entry[12]),
 			Resource: int(entry[13]),
-		})
-		// Store raw coords in the Lat/Lng fields temporarily — caller must convert
-		pois[len(pois)-1].Lat = float64(rawLat)
-		pois[len(pois)-1].Lng = float64(rawLng)
+		}
+
+		// Decode type-specific extended fields
+		switch poiType {
+		case POIVehicle: // type 2: 兵站 (FOB)
+			poi.Lives = int(entry[13])
+			poi.Supplies = int(entry[15])
+			poi.Health = int(entry[17])
+			poi.BuildTimer = int(binary.LittleEndian.Uint16(entry[21:23]))
+		case POISupplyCache: // type 3: 补给站
+			poi.Lives = int(entry[13])
+			poi.Supplies = int(entry[15])
+			poi.RedPct = int(entry[17])
+			poi.BluePct = int(entry[18])
+			poi.HeldTime = int(binary.LittleEndian.Uint16(entry[23:25]))
+		case POIControlPoint: // type 4: 控制点
+			poi.RedPct = int(entry[13])
+			poi.BluePct = int(entry[14])
+			poi.RedHeld = int(binary.LittleEndian.Uint16(entry[15:17]))
+			poi.BlueHeld = int(binary.LittleEndian.Uint16(entry[19:21]))
+		case POIStation: // type 5: 防御点
+			poi.Health = int(entry[13])
+			poi.HeldTime = int(binary.LittleEndian.Uint16(entry[14:16]))
+		}
+
+		// Store raw coords temporarily — caller must convert
+		poi.Lat = float64(rawLat)
+		poi.Lng = float64(rawLng)
+		pois = append(pois, poi)
 	}
 	return pois
 }

@@ -618,6 +618,116 @@ func (h *Handler) DeleteVideoGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": groupID})
 }
 
+// ── Proxy (pre-transcode) endpoints ──
+
+// GetProxyStatus handles GET /api/video-proxy/:token/status.
+func (h *Handler) GetProxyStatus(c *gin.Context) {
+	if h.proxyManager == nil {
+		c.JSON(http.StatusOK, video.ProxyStatus{State: "none"})
+		return
+	}
+	absPath, ok := resolveToken(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, h.proxyManager.Status(absPath))
+}
+
+// PostProxyStart handles POST /api/video-proxy/:token.
+func (h *Handler) PostProxyStart(c *gin.Context) {
+	if h.proxyManager == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "proxy manager not available"})
+		return
+	}
+	absPath, ok := resolveToken(c)
+	if !ok {
+		return
+	}
+	// Look up duration from index.
+	var durationMs int64
+	if h.videoScanner != nil {
+		if entry, found := h.videoScanner.Index().Lookup(absPath); found {
+			durationMs = entry.DurationMs
+		}
+	}
+	status, err := h.proxyManager.StartProxy(absPath, durationMs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+type batchProxyPayload struct {
+	GameID string `json:"gameId"`
+	UnitID *int   `json:"unitId,omitempty"` // nil = all units with groups
+}
+
+// PostProxyBatch handles POST /api/video-proxy/batch.
+// Starts proxy transcoding for all HEVC segments associated with a game
+// (or a specific unit). This is the "preload" button.
+func (h *Handler) PostProxyBatch(c *gin.Context) {
+	if h.proxyManager == nil || h.videoScanner == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not available"})
+		return
+	}
+	var body batchProxyPayload
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	info, ok := h.findGameInfo(body.GameID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		return
+	}
+	groups, err := video.LoadSidecar(info.FilePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// Collect all incompatible segments to transcode.
+	type src struct {
+		AbsPath    string
+		DurationMs int64
+	}
+	var sources []struct {
+		AbsPath    string
+		DurationMs int64
+	}
+	seen := make(map[string]bool)
+	for _, g := range groups {
+		if body.UnitID != nil && g.UnitID != *body.UnitID {
+			continue
+		}
+		for _, seg := range g.Segments {
+			if seg.Compatible || seen[seg.Path] {
+				continue
+			}
+			seen[seg.Path] = true
+			sources = append(sources, struct {
+				AbsPath    string
+				DurationMs int64
+			}{seg.Path, seg.DurationMs})
+		}
+	}
+	if len(sources) == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "no incompatible segments to transcode", "count": 0})
+		return
+	}
+	h.proxyManager.StartBatch(sources, 2)
+	c.JSON(http.StatusOK, gin.H{"message": "batch started", "count": len(sources)})
+}
+
+// GetProxyBatchStatus handles GET /api/video-proxy/batch-status?gameId=X
+func (h *Handler) GetProxyBatchStatus(c *gin.Context) {
+	if h.proxyManager == nil {
+		c.JSON(http.StatusOK, gin.H{"jobs": map[string]video.ProxyStatus{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": h.proxyManager.AllStatuses()})
+}
+
 // parseLocalGameTs parses the "YYYY-MM-DD HH:MM:SS" format used in
 // GameInfo start/end times, interpreting them in the local timezone.
 func parseLocalGameTs(ts string) (time.Time, error) {

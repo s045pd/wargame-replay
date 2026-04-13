@@ -12,9 +12,9 @@ const FILL_LAYER_ID = 'minefield-fill';
 const LINE_LAYER_ID = 'minefield-line';
 const LABEL_LAYER_ID = 'minefield-label';
 
-/** Orange/amber color scheme for danger zones */
-const FILL_COLOR = '#ff8c00';
-const LINE_COLOR = '#ff6600';
+/** Red danger zone styling — solid red border + dark interior */
+const FILL_COLOR = '#000000';
+const LINE_COLOR = '#cc2020';
 
 function buildGeoJson(minefields: Minefield[]): GeoJSON.FeatureCollection {
   return {
@@ -69,27 +69,26 @@ export function MinefieldLayer({ map, minefields }: MinefieldLayerProps) {
       data: buildGeoJson(dataRef.current),
     });
 
-    // Semi-transparent fill
+    // Dark interior fill — dims the minefield area
     map.addLayer({
       id: FILL_LAYER_ID,
       type: 'fill',
       source: SOURCE_ID,
       paint: {
         'fill-color': FILL_COLOR,
-        'fill-opacity': 0.10,
+        'fill-opacity': 0.35,
       },
     });
 
-    // Dashed border
+    // Solid red border
     map.addLayer({
       id: LINE_LAYER_ID,
       type: 'line',
       source: SOURCE_ID,
       paint: {
         'line-color': LINE_COLOR,
-        'line-width': 1.5,
-        'line-opacity': 0.6,
-        'line-dasharray': [6, 4],
+        'line-width': 2,
+        'line-opacity': 0.8,
       },
     });
 
@@ -110,10 +109,10 @@ export function MinefieldLayer({ map, minefields }: MinefieldLayerProps) {
           'text-allow-overlap': false,
         },
         paint: {
-          'text-color': LINE_COLOR,
+          'text-color': '#ff4444',
           'text-halo-color': '#000000',
-          'text-halo-width': 1,
-          'text-opacity': 0.7,
+          'text-halo-width': 1.5,
+          'text-opacity': 0.8,
         },
       });
     }

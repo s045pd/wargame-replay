@@ -40,19 +40,52 @@ function poiTypeName(type: number): string {
     case 2: return '兵站';
     case 3: return '补给站';
     case 4: return '争夺点';
-    case 5: return '前哨';
+    case 5: return '防御点';
     default: return '设施';
   }
+}
+
+/** Format seconds as HH:MM:SS */
+function fmtTime(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 /** Build a resource label string depending on POI type */
 function resourceLabel(poi: POIObject): string {
   const name = poiTypeName(poi.type);
   switch (poi.type) {
-    case 4:
-      return `${name} ${poi.resource}%`;
-    case 3:
-      return `${name} ${poi.resource}/10`;
+    case 2: { // 兵站: health, lives, supplies, buildTimer
+      const parts = [name];
+      if (poi.health !== undefined && poi.health > 0) parts.push(`${poi.health}%`);
+      if (poi.lives !== undefined) parts.push(`命${poi.lives}`);
+      if (poi.supplies !== undefined) parts.push(`资${poi.supplies}`);
+      if (poi.buildTimer && poi.buildTimer > 0) parts.push(`建${fmtTime(poi.buildTimer)}`);
+      return parts.join(' ');
+    }
+    case 3: { // 补给站: lives, supplies, capture %
+      const parts = [name];
+      if (poi.lives !== undefined) parts.push(`${poi.lives}/10`);
+      const rp = poi.redPct ?? 0;
+      const bp = poi.bluePct ?? 0;
+      if (rp > 0 || bp > 0) parts.push(`红${Math.min(rp, 100)}%蓝${Math.min(bp, 100)}%`);
+      return parts.join(' ');
+    }
+    case 4: { // 争夺点: capture %
+      const rp = poi.redPct ?? 0;
+      const bp = poi.bluePct ?? 0;
+      return `${name} 红${Math.min(rp, 100)}%蓝${Math.min(bp, 100)}%`;
+    }
+    case 5: { // 防御点: health, heldTime
+      const parts = [name];
+      if (poi.health !== undefined && poi.health > 0) parts.push(`${poi.health}%`);
+      if (poi.heldTime && poi.heldTime > 0) parts.push(fmtTime(poi.heldTime));
+      return parts.join(' ');
+    }
     default:
       return poi.resource > 0 ? `${name} ${poi.resource}` : name;
   }

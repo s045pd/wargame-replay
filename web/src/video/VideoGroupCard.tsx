@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Trash2, Check, Eye, EyeOff, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, AlertTriangle, Link } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Trash2, Check, Eye, EyeOff, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, AlertTriangle, Link, Zap } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { usePlayback } from '../store/playback';
 import { useVideos } from '../store/videos';
 import { formatDurationMs, formatOffsetMs } from './alignMath';
-import type { VideoGroup } from '../lib/api';
+import { startProxy, getProxyStatus, type VideoGroup, type ProxyStatus } from '../lib/api';
 import { RelinkDialog } from './RelinkDialog';
 
 interface VideoGroupCardProps {
@@ -30,6 +30,55 @@ export function VideoGroupCard({ group }: VideoGroupCardProps) {
   const anyIncompatible = group.segments.some((s) => !s.compatible);
   const staleCount = group.segments.filter((s) => s.stale).length;
   const hasStale = staleCount > 0;
+
+  // Proxy (pre-transcode) state for incompatible segments.
+  const [proxyStates, setProxyStates] = useState<Record<string, ProxyStatus>>({});
+  const [proxyRunning, setProxyRunning] = useState(false);
+
+  const pollProxy = useCallback(() => {
+    const incompatible = group.segments.filter((s) => !s.compatible);
+    if (incompatible.length === 0) return;
+    let active = false;
+    Promise.all(
+      incompatible.map(async (s) => {
+        const st = await getProxyStatus(s.relPath);
+        if (st.state === 'running' || st.state === 'queued') active = true;
+        return [s.relPath, st] as const;
+      }),
+    ).then((results) => {
+      const map: Record<string, ProxyStatus> = {};
+      for (const [path, st] of results) map[path] = st;
+      setProxyStates(map);
+      setProxyRunning(active);
+    });
+  }, [group.segments]);
+
+  // Poll proxy status every 3s when running.
+  useEffect(() => {
+    if (!anyIncompatible) return;
+    pollProxy();
+    const id = setInterval(pollProxy, 3000);
+    return () => clearInterval(id);
+  }, [anyIncompatible, pollProxy]);
+
+  const allProxyDone = anyIncompatible &&
+    group.segments.filter((s) => !s.compatible).every((s) => proxyStates[s.relPath]?.state === 'done');
+  const proxyProgress = (() => {
+    const incomp = group.segments.filter((s) => !s.compatible);
+    if (incomp.length === 0) return 0;
+    const total = incomp.reduce((sum, s) => sum + (proxyStates[s.relPath]?.progress ?? 0), 0);
+    return Math.round(total / incomp.length);
+  })();
+
+  async function handleStartProxy() {
+    setProxyRunning(true);
+    for (const s of group.segments) {
+      if (!s.compatible) {
+        await startProxy(s.relPath);
+      }
+    }
+    pollProxy();
+  }
 
   function nudge(deltaMs: number) {
     void updateGroup(group.id, { offsetMs: group.offsetMs + deltaMs });
@@ -171,8 +220,38 @@ export function VideoGroupCard({ group }: VideoGroupCardProps) {
       </div>
 
       {anyIncompatible && (
-        <div className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300">
-          {t('video_incompatible_warn')}
+        <div className="mt-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+          {allProxyDone ? (
+            <div className="flex items-center gap-2 text-emerald-300">
+              <Check className="h-3 w-3" />
+              <span>{t('video_proxy_done')}</span>
+            </div>
+          ) : proxyRunning ? (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Zap className="h-3 w-3 animate-pulse" />
+                <span>{t('video_proxy_running')} {proxyProgress}%</span>
+              </div>
+              <div className="h-1 w-full rounded bg-amber-900/50 overflow-hidden">
+                <div
+                  className="h-full rounded bg-amber-400 transition-all duration-500"
+                  style={{ width: `${proxyProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="flex-1">{t('video_incompatible_warn')}</span>
+              <button
+                type="button"
+                onClick={() => { void handleStartProxy(); }}
+                className="flex items-center gap-1 shrink-0 rounded bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-100 hover:bg-amber-500/30"
+              >
+                <Zap className="h-3 w-3" />
+                {t('video_proxy_start')}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

@@ -298,6 +298,7 @@ function buildAnimatedGeoJson(
             hp: displayHP,
             ammo: u.ammo ?? 0,
             supply: u.supply ?? 0,
+            bandage: u.bandage ?? 0,
             revivalTokens: u.revivalTokens ?? 0,
             name: u.name || `#${u.id}`,
             unitClass: cls,

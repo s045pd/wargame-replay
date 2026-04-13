@@ -58,6 +58,22 @@ func (h *Handler) StreamVideo(c *gin.Context) {
 		return
 	}
 
+	// Check for pre-transcoded proxy file first — if it exists, serve it
+	// with full Range support (identical UX to native H.264).
+	if h.proxyManager != nil && h.proxyManager.HasProxy(absPath) {
+		proxyPath := h.proxyManager.ProxyPath(absPath)
+		pf, err := os.Open(proxyPath)
+		if err == nil {
+			defer pf.Close()
+			pStat, _ := pf.Stat()
+			c.Header("Content-Type", "video/mp4")
+			c.Header("Accept-Ranges", "bytes")
+			c.Header("Cache-Control", "no-store")
+			http.ServeContent(c.Writer, c.Request, pStat.Name(), pStat.ModTime(), pf)
+			return
+		}
+	}
+
 	if c.Query("transcode") == "1" {
 		h.streamTranscoded(c, absPath)
 		return

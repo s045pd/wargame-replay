@@ -49,11 +49,19 @@ function computeGridData(
 
   if (!bounds) return { rows, cols, rowZones, colZones, minLat: 0, maxLat: 0, minLng: 0, maxLng: 0, lines: emptyFC() };
 
-  const pad = 1; // extra cells of padding around bounds
-  const minLat = bounds.minLat - grat.latSpace * pad;
-  const maxLat = bounds.maxLat + grat.latSpace * pad;
-  const minLng = bounds.minLng - grat.lngSpace * pad;
-  const maxLng = bounds.maxLng + grat.lngSpace * pad;
+  // Use the full graticule extent so all grid cells (A-R, 1-15) are always visible,
+  // regardless of where the data bounds happen to be.
+  const totalCols0 = (grat.cr >> 8) + 2;
+  const totalRows0 = (grat.cr & 0xFF) + 1;
+  const gratMinLat = grat.latBegin - totalRows0 * grat.latSpace;
+  const gratMaxLat = grat.latBegin;
+  const gratMinLng = grat.lngBegin;
+  const gratMaxLng = grat.lngBegin + totalCols0 * grat.lngSpace;
+  const pad = 1;
+  const minLat = Math.min(bounds.minLat, gratMinLat) - grat.latSpace * pad;
+  const maxLat = Math.max(bounds.maxLat, gratMaxLat) + grat.latSpace * pad;
+  const minLng = Math.min(bounds.minLng, gratMinLng) - grat.lngSpace * pad;
+  const maxLng = Math.max(bounds.maxLng, gratMaxLng) + grat.lngSpace * pad;
 
   const lineFeatures: GeoJSON.Feature[] = [];
 
@@ -146,9 +154,9 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
       source: LINE_SOURCE_ID,
       layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: {
-        'line-color': 'rgba(255, 255, 255, 0.15)',
-        'line-width': 0.8,
-        'line-dasharray': [4, 4],
+        'line-color': 'rgba(255, 255, 255, 0.35)',
+        'line-width': 1,
+        'line-dasharray': [4, 3],
       },
     });
   }, [map]);

@@ -106,7 +106,7 @@ function jitteredCooldown(): number {
 export function useHotspotDirector() {
   // ── Reactive values (gate effect execution) ──
   const { allHotspots: hotspots, currentTs, playing, coordMode, speed } = usePlayback();
-  const { autoMode } = useDirector();
+  const { autoMode, mode } = useDirector();
   const manualOverride = useDirector(s => s.manualOverride);
   const { typeFilters } = useHotspotFilter();
 
@@ -175,7 +175,9 @@ export function useHotspotDirector() {
   // ── Main director loop ──
   useEffect(() => {
     // ── Guard: not active ──
-    if (!autoMode || !playing || !currentTs) {
+    // Director tracking only runs in 'director' mode.
+    // Switching to 'replay' clears all tracking (follow, focus, slowdown).
+    if (!autoMode || !playing || !currentTs || mode !== 'director') {
       fullCleanup();
       return;
     }
@@ -491,5 +493,5 @@ export function useHotspotDirector() {
       dir.setTargetCamera({ x: best.centerLng, y: best.centerLat, zoom: 8 });
     }
     dir.recordSwitch();
-  }, [autoMode, manualOverride, playing, currentTs, parsedHotspots, coordMode, fullCleanup]);
+  }, [autoMode, manualOverride, playing, currentTs, parsedHotspots, coordMode, mode, fullCleanup]);
 }

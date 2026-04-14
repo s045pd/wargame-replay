@@ -216,7 +216,6 @@ export default function App() {
 
   // On mobile: always replay mode, no director panel
   const effectiveMode = isMobile ? 'replay' : mode;
-  const showMap = immersive || effectiveMode === 'replay';
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -232,20 +231,19 @@ export default function App() {
         )
       )}
 
-      {/* Main content */}
-      {!immersive && effectiveMode === 'director' ? (
-        <DirectorPanel />
-      ) : (
-        <div className="flex-1 relative">
-          {showMap && (
-            coordMode === 'wgs84' ? (
-              <MapView units={units} immersive={immersive} isMobile={isMobile} />
-            ) : (
-              <RelativeCanvas units={units} />
-            )
+      {/* Main content — MapView stays mounted across mode switches to avoid re-init */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="relative flex-1">
+          {coordMode === 'wgs84' ? (
+            <MapView units={units} immersive={immersive} isMobile={isMobile} />
+          ) : (
+            <RelativeCanvas units={units} />
           )}
         </div>
-      )}
+        {!immersive && effectiveMode === 'director' && (
+          <DirectorPanel />
+        )}
+      </div>
 
       {/* Bottom bar */}
       {!immersive && (

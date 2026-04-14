@@ -251,9 +251,6 @@ export default function App() {
     return <GameList />;
   }
 
-  // In immersive mode: always show map (replay layout), hide top/bottom chrome
-  const showMap = immersive || mode === 'replay';
-
   // Reserve space for docked video layouts so the map and timeline don't get
   // covered. Floating mode overlays the map and needs no padding.
   const hasDockedVideo = !immersive && videoActiveCount > 0 && videoLayoutMode !== 'floating';
@@ -273,19 +270,19 @@ export default function App() {
           onShowVideoManager={videoServerReady ? () => setShowVideoManager(true) : undefined}
         />
       )}
-      {!immersive && mode === 'director' ? (
-        <DirectorPanel />
-      ) : (
-        <div className="flex-1 relative" style={mapContainerStyle}>
-          {showMap && (
-            coordMode === 'wgs84' ? (
-              <MapView units={units} immersive={immersive} />
-            ) : (
-              <RelativeCanvas units={units} />
-            )
+      {/* Main content — MapView stays mounted across mode switches to avoid re-init */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="relative flex-1" style={mapContainerStyle}>
+          {coordMode === 'wgs84' ? (
+            <MapView units={units} immersive={immersive} />
+          ) : (
+            <RelativeCanvas units={units} />
           )}
         </div>
-      )}
+        {!immersive && mode === 'director' && (
+          <DirectorPanel />
+        )}
+      </div>
       {!immersive && <Timeline />}
       {!immersive && showBookmarks && (
         <BookmarkList onClose={() => setShowBookmarks(false)} />

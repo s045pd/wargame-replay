@@ -8,7 +8,7 @@ import { SettingSlider } from '../controls/SettingSlider';
 import { SettingSelect } from '../controls/SettingSelect';
 import { SettingGroup } from '../controls/SettingGroup';
 
-const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128];
+const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 const SLOW_DIVS = [0, 2, 4, 8, 16];
 const SLOW_SPEEDS = [0, 1, 2, 4, 8];
 const BOMBARD_DIVS = [0, 2, 4, 8];

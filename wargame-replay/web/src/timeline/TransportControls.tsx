@@ -3,7 +3,7 @@ import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
 
-const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128] as const;
+const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512] as const;
 
 /** Parse a DB timestamp "YYYY-MM-DD HH:MM:SS" as a local Date */
 function parseDbTs(ts: string): Date {

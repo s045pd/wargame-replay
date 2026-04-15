@@ -15,7 +15,7 @@ import { Play, Pause, SkipForward, SkipBack, ChevronDown } from 'lucide-react';
 import { usePlayback } from '../store/playback';
 import { useI18n } from '../lib/i18n';
 
-const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128] as const;
+const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512] as const;
 
 function parseDbTs(ts: string): Date {
   return new Date(ts.replace(' ', 'T'));

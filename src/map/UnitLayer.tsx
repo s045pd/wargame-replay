@@ -326,7 +326,7 @@ function buildAnimatedGeoJson(
 
 /**
  * Compute adaptive position lerp duration based on playback speed.
- * At 1x we use the default 900ms; at high speeds (32x–128x) the server
+ * At 1x we use the default 900ms; at high speeds (32x–512x) the server
  * delivers frames every ~62ms so we must lerp faster to keep up.
  */
 function adaptiveLerpMs(speed: number): number {

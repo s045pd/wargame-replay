@@ -53,9 +53,11 @@ export function KillLeaderboard({ units, currentTs }: KillLeaderboardProps) {
     }
     // lo = number of kills with ts <= currentTs
 
-    // Count kills per attacker
+    // Count kills per attacker (allKills also carries hit/heal/revive now —
+    // filter to true kills before counting).
     const counts = new Map<number, number>();
     for (let i = 0; i < lo; i++) {
+      if (allKills[i].type !== 'kill') continue;
       const src = allKills[i].src;
       counts.set(src, (counts.get(src) || 0) + 1);
     }

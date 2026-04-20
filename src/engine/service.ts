@@ -148,11 +148,15 @@ export class GameService {
     // Build sorted event timestamps
     svc.hitTimestamps = [...svc.hitEventsByTs.keys()].sort();
 
-    // Collect all kills
+    // Collect all combat events (kill + hit + heal + revive) for per-unit
+    // personal-event filtering and leaderboard counts. Consumers that only
+    // care about kills filter by ev.type === 'kill' themselves.
     const allKills: GameEvent[] = [];
     for (const ts of svc.hitTimestamps) {
       for (const ev of svc.hitEventsByTs.get(ts)!) {
-        if (ev.type === 'kill') allKills.push(ev);
+        if (ev.type === 'kill' || ev.type === 'hit' || ev.type === 'heal' || ev.type === 'revive') {
+          allKills.push(ev);
+        }
       }
     }
     svc._allKills = allKills;

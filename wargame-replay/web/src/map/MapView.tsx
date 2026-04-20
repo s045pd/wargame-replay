@@ -23,15 +23,20 @@ import { useHotspotFilter } from '../store/hotspotFilter';
 import { useVisualConfig } from '../store/visualConfig';
 import { useI18n } from '../lib/i18n';
 
+/** Raster dim intensity — 'strong' for director personal hotspots, 'soft' for manual follow */
+type DimLevel = 'off' | 'soft' | 'strong';
+
 /** Dim or restore the base raster layer for focus mode — avoids full style reload */
-function applyRasterDim(map: mapboxgl.Map, dim: boolean) {
+function applyRasterDim(map: mapboxgl.Map, level: DimLevel) {
   try {
     const layers = map.getStyle()?.layers;
     if (!layers) return;
     const rasterLayer = layers.find(l => l.type === 'raster');
     if (!rasterLayer) return;
-    map.setPaintProperty(rasterLayer.id, 'raster-brightness-max', dim ? 0.15 : 1);
-    map.setPaintProperty(rasterLayer.id, 'raster-saturation', dim ? -0.8 : 0);
+    const brightness = level === 'strong' ? 0.15 : level === 'soft' ? 0.45 : 1;
+    const saturation = level === 'strong' ? -0.8 : level === 'soft' ? -0.45 : 0;
+    map.setPaintProperty(rasterLayer.id, 'raster-brightness-max', brightness);
+    map.setPaintProperty(rasterLayer.id, 'raster-saturation', saturation);
   } catch { /* style not ready yet */ }
 }
 
@@ -274,19 +279,29 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       }
       // Re-apply focus dim if active
       const ds = useDirector.getState();
+      const pb = usePlayback.getState();
+      const manualActive = pb.manualFollow && pb.selectedUnitId !== null;
       if (ds.focusMode.active && ds.focusDarkMap) {
-        applyRasterDim(map, true);
+        applyRasterDim(map, 'strong');
+      } else if (manualActive) {
+        applyRasterDim(map, 'soft');
       }
     });
   }, [mapStyle, mapReady, styleNonce]);
 
   // Focus mode dark overlay — dims the base map via raster paint properties
   // instead of swapping styles (avoids full tile reload).
+  // Two tiers: director personal hotspot (strong) or manual follow (soft).
+  const manualFocusActive = manualFollow && selectedUnitId !== null;
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
-    const shouldDim = focusMode.active && focusDarkMap;
-    applyRasterDim(mapRef.current, shouldDim);
-  }, [focusMode.active, focusDarkMap, mapReady]);
+    const level: DimLevel = focusMode.active && focusDarkMap
+      ? 'strong'
+      : manualFocusActive && !focusMode.active
+        ? 'soft'
+        : 'off';
+    applyRasterDim(mapRef.current, level);
+  }, [focusMode.active, focusDarkMap, manualFocusActive, mapReady]);
 
   // Apply tilt/pitch mode when toggled
   useEffect(() => {
@@ -555,6 +570,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
             events={events}
             selectedUnitId={followSelectedUnit ? selectedUnitId : null}
             focusMode={focusMode}
+            manualFocusUnitId={manualFocusActive && !focusMode.active ? selectedUnitId : null}
           />
           <UnitLayer
             map={mapRef.current}
@@ -562,6 +578,7 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
             selectedUnitId={selectedUnitId}
             speed={speed}
             focusMode={focusMode}
+            manualFocusUnitId={manualFocusActive && !focusMode.active ? selectedUnitId : null}
             events={events}
             onSelectUnit={(id) => {
               setSelectedUnitId(id);

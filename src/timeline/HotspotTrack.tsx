@@ -45,16 +45,23 @@ interface HotspotTrackProps {
 export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { meta, allHotspots: rawHotspots, currentTs, seek } = usePlayback();
+  const { meta, allHotspots: rawHotspots, currentTs, seek, selectedUnitId, followSelectedUnit, manualFollow } = usePlayback();
   const { typeFilters } = useHotspotFilter();
   const { t } = useI18n();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; hs: HotspotEvent } | null>(null);
 
-  // Filter hotspots by enabled types
-  const hotspots = useMemo(
-    () => rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters]),
-    [rawHotspots, typeFilters],
-  );
+  const isPersonalMode = selectedUnitId !== null && followSelectedUnit && manualFollow;
+
+  // Filter hotspots: in personal mode, keep only those involving the followed unit;
+  // otherwise apply the per-type visibility filters.
+  const hotspots = useMemo(() => {
+    if (isPersonalMode && selectedUnitId != null) {
+      return rawHotspots.filter(
+        (hs) => hs.focusUnitId === selectedUnitId || (hs.units?.includes(selectedUnitId) ?? false),
+      );
+    }
+    return rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters]);
+  }, [rawHotspots, typeFilters, isPersonalMode, selectedUnitId]);
 
   const startMs = useMemo(() => (meta ? parseTs(meta.startTime) : 0), [meta]);
   const endMs = useMemo(() => (meta ? parseTs(meta.endTime) : 0), [meta]);
@@ -217,12 +224,17 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
   return (
     <div className="flex items-stretch border-b border-zinc-800" style={{ height }}>
-      {/* Label sidebar */}
+      {/* Label sidebar — recolors to personal hue while manually following */}
       <div
         className="shrink-0 flex items-center px-2 text-[10px] font-medium tracking-wider uppercase border-r border-zinc-800"
-        style={{ width: labelWidth, color: '#ef4444', borderLeftColor: '#ef4444', borderLeftWidth: 2 }}
+        style={{
+          width: labelWidth,
+          color: isPersonalMode ? '#a855f7' : '#ef4444',
+          borderLeftColor: isPersonalMode ? '#a855f7' : '#ef4444',
+          borderLeftWidth: 2,
+        }}
       >
-        {t('hotspot')}
+        {isPersonalMode ? t('personal_events') : t('hotspot')}
       </div>
       {/* Canvas */}
       <div

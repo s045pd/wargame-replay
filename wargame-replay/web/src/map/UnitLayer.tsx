@@ -23,8 +23,6 @@ interface UnitLayerProps {
   selectedUnitId?: number | null;
   speed?: number;
   focusMode?: FocusMode;
-  /** Manual-follow focus unit — purple badge + soft dim on other units. Only active when director focus isn't. */
-  manualFocusUnitId?: number | null;
   events?: GameEvent[];
   onSelectUnit?: (id: number | null) => void;
 }
@@ -33,11 +31,8 @@ const SOURCE_ID = 'units-source';
 const GLOW_LAYER_ID = 'units-glow-layer';
 const ALIVE_LAYER_ID = 'units-alive-layer';
 const DEAD_LAYER_ID = 'units-dead-layer';
-const PERSONAL_BADGE_LAYER_ID = 'units-personal-badge-layer';
 const SELECTED_LAYER_ID = 'units-selected-layer';
 const LABEL_LAYER_ID = 'units-label-layer';
-
-const PERSONAL_BADGE_COLOR = '#a855f7';
 
 // --- Animation timing ---
 const POS_LERP_MS = 900;   // position interpolation
@@ -120,7 +115,6 @@ function buildAnimatedGeoJson(
   now: number,
   posLerpMs: number = POS_LERP_MS,
   focus?: FocusInfo,
-  manualFocusUnitId?: number | null,
 ): GeoJSON.FeatureCollection {
   const pbFx = usePlayback.getState();
   const vcState = useVisualConfig.getState();
@@ -255,9 +249,6 @@ function buildAnimatedGeoJson(
         let labelSize = vcState.labelFontSize;
         let labelColor = '#ffffff';   // default label color
         let labelOpacity = 1.0;       // default label opacity
-        const manualFocus = !focus?.active && manualFocusUnitId != null;
-        const isManualPersonal = manualFocus && u.id === manualFocusUnitId;
-
         if (focus?.active) {
           if (u.id === focus.focusUnitId) {
             // ★ Focus unit (the killer): gold glow, full brightness, name visible
@@ -292,20 +283,6 @@ function buildAnimatedGeoJson(
             glowOpacity *= 0.4;
             deadIconOpacity = 0.25;
           }
-        } else if (manualFocus) {
-          if (isManualPersonal) {
-            // ◎ Manual-follow focus unit: subtle boost + purple badge ring (rendered in PERSONAL_BADGE_LAYER)
-            iconScale = Math.max(iconScale, 1.08);
-            showLabel = 1;
-            labelText = u.name || `#${u.id}`;
-            labelColor = '#ffffff';
-            labelSize = 11;
-          } else {
-            // ○ Background units during manual follow: lightly dimmed, no label
-            aliveIconOpacity *= 0.5;
-            glowOpacity *= 0.35;
-            deadIconOpacity = 0.2;
-          }
         }
 
         return {
@@ -333,7 +310,6 @@ function buildAnimatedGeoJson(
             aliveIconOpacity,
             iconScale,
             selected: u.id === selectedUnitId ? 1 : 0,
-            manualPersonal: isManualPersonal ? 1 : 0,
             showLabel,
             deadIconOpacity,
             labelText,
@@ -361,7 +337,7 @@ function adaptiveLerpMs(speed: number): number {
   return Math.max(40, Math.min(POS_LERP_MS, tickMs * 0.85));
 }
 
-export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, manualFocusUnitId, events, onSelectUnit }: UnitLayerProps) {
+export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, events, onSelectUnit }: UnitLayerProps) {
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const onSelectUnitRef = useRef(onSelectUnit);
   onSelectUnitRef.current = onSelectUnit;
@@ -371,8 +347,6 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
   selectedRef.current = selectedUnitId;
   const speedRef = useRef(speed);
   speedRef.current = speed;
-  const manualFocusRef = useRef<number | null | undefined>(manualFocusUnitId);
-  manualFocusRef.current = manualFocusUnitId;
 
   // Stable focus info ref — convert relatedUnitIds to Set once for O(1) lookup.
   // Only rebuild when the focus mode identity actually changes (avoids per-frame Set allocation).
@@ -414,7 +388,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
     const now = performance.now();
     const geojson = buildAnimatedGeoJson(
       unitsRef.current, selectedRef.current, visualStatesRef.current, now,
-      POS_LERP_MS, focusInfoRef.current, manualFocusRef.current,
+      POS_LERP_MS, focusInfoRef.current,
     );
 
     map.addSource(SOURCE_ID, {
@@ -467,23 +441,6 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
       },
       paint: {
         'icon-opacity': ['get', 'deadIconOpacity'],
-      },
-    });
-
-    // Personal badge — outer purple ring around the manually-followed unit.
-    // Renders below the selection ring so the white inner ring still reads clearly on top.
-    map.addLayer({
-      id: PERSONAL_BADGE_LAYER_ID,
-      type: 'circle',
-      source: SOURCE_ID,
-      filter: ['==', ['get', 'manualPersonal'], 1],
-      paint: {
-        'circle-radius': 22,
-        'circle-color': 'transparent',
-        'circle-opacity': 0,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': PERSONAL_BADGE_COLOR,
-        'circle-stroke-opacity': 0.85,
       },
     });
 
@@ -614,7 +571,6 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
       try {
         if (map.getLayer(LABEL_LAYER_ID)) map.removeLayer(LABEL_LAYER_ID);
         if (map.getLayer(SELECTED_LAYER_ID)) map.removeLayer(SELECTED_LAYER_ID);
-        if (map.getLayer(PERSONAL_BADGE_LAYER_ID)) map.removeLayer(PERSONAL_BADGE_LAYER_ID);
         if (map.getLayer(DEAD_LAYER_ID)) map.removeLayer(DEAD_LAYER_ID);
         if (map.getLayer(ALIVE_LAYER_ID)) map.removeLayer(ALIVE_LAYER_ID);
         if (map.getLayer(GLOW_LAYER_ID)) map.removeLayer(GLOW_LAYER_ID);
@@ -845,7 +801,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
           source.setData(
             buildAnimatedGeoJson(
               unitsRef.current, selectedRef.current, states, now, curLerp,
-              focusInfoRef.current, manualFocusRef.current,
+              focusInfoRef.current,
             ),
           );
         }
@@ -860,7 +816,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ma
       rafRef.current = requestAnimationFrame(animate);
     }
    
-  }, [map, units, selectedUnitId, focusMode, manualFocusUnitId, events]);
+  }, [map, units, selectedUnitId, focusMode, events]);
 
   // ---------- reactive paint updates for selection ring ----------
   const selectionColor = useVisualConfig(s => s.selectionColor);

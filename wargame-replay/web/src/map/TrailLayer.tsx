@@ -13,8 +13,6 @@ interface TrailLayerProps {
   events?: GameEvent[];
   selectedUnitId?: number | null;
   focusMode?: FocusMode;
-  /** Manual-follow focus unit — dims tracers not involving this unit (when director focus isn't active). */
-  manualFocusUnitId?: number | null;
 }
 
 // ---------- source / layer IDs ----------
@@ -128,7 +126,7 @@ function buildAnimatedGeoJson(
   return { type: 'FeatureCollection', features };
 }
 
-export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, focusMode, manualFocusUnitId }: TrailLayerProps) {
+export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, focusMode }: TrailLayerProps) {
   const layersAddedRef = useRef(false);
   const tracersRef = useRef<TracerEntry[]>([]);
   const rafRef = useRef<number>(0);
@@ -292,9 +290,6 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
     const focusActive = focusMode?.active ?? false;
     const focusRelatedSet = new Set<number>(focusMode?.relatedUnitIds);
     const focusUnitId = focusMode?.focusUnitId ?? -1;
-    // Manual follow dim — only applies when director focus is inactive
-    const manualActive = !focusActive && manualFocusUnitId != null;
-    const manualId = manualFocusUnitId ?? -1;
 
     const { killLineEnabled, hitLineEnabled } = usePlayback.getState();
     const vcDur = useVisualConfig.getState();
@@ -322,11 +317,6 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         const dstIsRelated = dst.id === focusUnitId || focusRelatedSet.has(dst.id);
         if (!srcIsRelated && !dstIsRelated) {
           focusDim = 0.06; // almost invisible
-        }
-      } else if (manualActive) {
-        // Manual follow: soft dim for tracers that don't involve the followed unit
-        if (src.id !== manualId && dst.id !== manualId) {
-          focusDim = 0.3;
         }
       }
 
@@ -380,7 +370,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
       };
       rafRef.current = requestAnimationFrame(animate);
     }
-  }, [map, units, trailEnabled, events, selectedUnitId, focusMode, manualFocusUnitId]);
+  }, [map, units, trailEnabled, events, selectedUnitId, focusMode]);
 
   // Clear when trails disabled
   useEffect(() => {

@@ -10,6 +10,10 @@ import { HotspotEvent } from '../lib/api';
 const TYPES = ['firefight', 'killstreak', 'mass_casualty', 'engagement', 'bombardment', 'long_range'] as const;
 type HSType = (typeof TYPES)[number];
 
+/** Virtual "personal" tab — events involving the manually-followed unit. */
+type TabKey = HSType | 'personal';
+const PERSONAL_COLOR = '#a855f7';
+
 /** Tab colors matching HotspotControlPanel */
 const TYPE_COLORS: Record<HSType, string> = {
   firefight: '#ff9900',
@@ -18,6 +22,11 @@ const TYPE_COLORS: Record<HSType, string> = {
   engagement: '#ff8800',
   bombardment: '#ffee44',
   long_range: '#00ccff',
+};
+
+const TAB_COLORS: Record<TabKey, string> = {
+  ...TYPE_COLORS,
+  personal: PERSONAL_COLOR,
 };
 
 function formatTime(ts: string): string {
@@ -30,9 +39,9 @@ function parseTs(ts: string): number {
 }
 
 export function HotspotEventTabs() {
-  const { allHotspots, currentTs } = usePlayback();
+  const { allHotspots, currentTs, manualFollow, selectedUnitId } = usePlayback();
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<HSType>('killstreak');
+  const [activeTab, setActiveTab] = useState<TabKey>('killstreak');
 
   const curMs = currentTs ? parseTs(currentTs) : 0;
 
@@ -53,10 +62,19 @@ export function HotspotEventTabs() {
     return map;
   }, [allHotspots]);
 
+  // Events related to the manually-followed unit (focusUnit or member of units[]).
+  const personalEvents = useMemo(() => {
+    if (!manualFollow || selectedUnitId == null) return [];
+    return allHotspots
+      .filter((hs) => hs.focusUnitId === selectedUnitId || (hs.units?.includes(selectedUnitId) ?? false))
+      .sort((a, b) => b.score - a.score);
+  }, [allHotspots, manualFollow, selectedUnitId]);
+
   // Events for the active tab, sorted by score desc
   const tabEvents = useMemo(() => {
+    if (activeTab === 'personal') return personalEvents;
     return [...(grouped[activeTab] || [])].sort((a, b) => b.score - a.score);
-  }, [grouped, activeTab]);
+  }, [grouped, activeTab, personalEvents]);
 
   // Click handler — full cleanup + set up new hotspot (mirrors auto-director Phase 5)
   const handleClick = (hs: HotspotEvent) => {
@@ -132,26 +150,33 @@ export function HotspotEventTabs() {
     dir.setManualOverride(true);
   };
 
+  const personalAvailable = manualFollow && selectedUnitId != null;
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Tab bar */}
       <div className="flex gap-0.5 mb-2 flex-wrap">
-        {TYPES.map((type) => {
-          const count = grouped[type].length;
-          const isActive = type === activeTab;
+        {(['personal', ...TYPES] as TabKey[]).map((tab) => {
+          const isPersonal = tab === 'personal';
+          const count = isPersonal ? personalEvents.length : grouped[tab as HSType].length;
+          const isActive = tab === activeTab;
+          const dimmed = isPersonal && !personalAvailable;
+          const color = TAB_COLORS[tab];
           return (
             <button
-              key={type}
-              onClick={() => setActiveTab(type)}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
               className={`relative px-2 py-1 text-[10px] font-medium rounded transition-colors leading-tight ${
                 isActive
                   ? 'text-white'
-                  : 'text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800'
+                  : dimmed
+                    ? 'text-zinc-600 bg-zinc-800/30'
+                    : 'text-zinc-500 hover:text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800'
               }`}
-              style={isActive ? { backgroundColor: TYPE_COLORS[type] + '30', color: TYPE_COLORS[type] } : undefined}
+              style={isActive ? { backgroundColor: color + '30', color } : undefined}
             >
-              {t(type)}
-              {count > 0 && (
+              {isPersonal ? t('personal_events') : t(tab)}
+              {count > 0 ? (
                 <span
                   className={`ml-1 text-[9px] px-1 rounded-full ${
                     isActive ? 'bg-white/20' : 'bg-zinc-700 text-zinc-400'
@@ -159,7 +184,9 @@ export function HotspotEventTabs() {
                 >
                   {count}
                 </span>
-              )}
+              ) : isPersonal && !personalAvailable ? (
+                <span className="ml-1 text-[9px] text-zinc-600">{t('personal_tab_count_off')}</span>
+              ) : null}
             </button>
           );
         })}
@@ -168,7 +195,9 @@ export function HotspotEventTabs() {
       {/* Event list — scrollable, fills remaining sidebar space */}
       <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
         {tabEvents.length === 0 ? (
-          <div className="text-xs text-zinc-600 italic py-2">{t('no_events')}</div>
+          <div className="text-xs text-zinc-600 italic py-2">
+            {activeTab === 'personal' && !personalAvailable ? t('personal_tab_hint') : t('no_events')}
+          </div>
         ) : (
           tabEvents.map((hs) => {
             const hsStart = parseTs(hs.startTs);
@@ -188,14 +217,21 @@ export function HotspotEventTabs() {
                       : 'bg-zinc-800 border-transparent text-zinc-300 hover:bg-zinc-700'
                 }`}
               >
-                {/* Row 1: label + score */}
+                {/* Row 1: label + score (personal tab shows per-event type dot) */}
                 <div className="flex justify-between items-center gap-2">
+                  {activeTab === 'personal' && (
+                    <span
+                      className="w-2 h-2 rounded-sm shrink-0"
+                      style={{ backgroundColor: TYPE_COLORS[hs.type as HSType] ?? PERSONAL_COLOR }}
+                      title={t(hs.type as HSType)}
+                    />
+                  )}
                   <span className="font-medium truncate">
                     {hs.focusName ? `${hs.focusName} · ${hs.label}` : hs.label}
                   </span>
                   <span
                     className="shrink-0 text-[10px] font-mono px-1 rounded"
-                    style={{ color: TYPE_COLORS[activeTab] }}
+                    style={{ color: activeTab === 'personal' ? (TYPE_COLORS[hs.type as HSType] ?? PERSONAL_COLOR) : TAB_COLORS[activeTab] }}
                   >
                     {Math.round(hs.score)}
                   </span>

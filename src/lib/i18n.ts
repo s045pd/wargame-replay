@@ -467,6 +467,22 @@ const translations: Record<Locale, Record<string, string>> = {
     'video_error_missing': 'File missing on disk',
     'video_error_out_of_range': 'No video at current game time',
     'video_error_incompatible': 'Browser does not support this codec',
+
+    // GameBrowser
+    'gb_subtitle': 'Browser-only replay viewer — pick a game or load your own',
+    'gb_available_games': 'Available Games',
+    'gb_or_local': 'or',
+    'gb_load_local': 'Load local file',
+    'gb_downloading_db': 'Downloading game data…',
+    'gb_downloading_txt': 'Downloading map sidecar…',
+    'gb_initializing': 'Initializing…',
+
+    // FileDrop
+    'file_drop_no_db': 'No .db file found. Please select a valid game database file.',
+    'file_drop_desc': 'Browser-only replay viewer. Drop your .db game file (and optional .txt sidecar) to start.',
+    'file_drop_hint': 'Drop .db + .txt files here, or click to browse',
+    'file_drop_hint_mobile': 'Tap to select .db + .txt files',
+    'file_drop_formats': 'Supports: .db (game database) + .txt (map sidecar, optional)',
   },
   zh: {
     // TopBar
@@ -932,6 +948,22 @@ const translations: Record<Locale, Record<string, string>> = {
     'video_error_missing': '文件已丢失',
     'video_error_out_of_range': '当前时间不在视频范围内',
     'video_error_incompatible': '浏览器不支持该编码',
+
+    // GameBrowser
+    'gb_subtitle': '浏览器内回放 — 选一场对局，或加载本地存档',
+    'gb_available_games': '可用对局',
+    'gb_or_local': '或',
+    'gb_load_local': '加载本地存档',
+    'gb_downloading_db': '下载对局数据…',
+    'gb_downloading_txt': '下载地图副档…',
+    'gb_initializing': '初始化中…',
+
+    // FileDrop
+    'file_drop_no_db': '未找到 .db 文件，请选择有效的对局存档。',
+    'file_drop_desc': '纯浏览器回放观看器。拖入 .db 对局存档（可选 .txt 地图副档）即可开始。',
+    'file_drop_hint': '拖入 .db 和 .txt 文件，或点击选择',
+    'file_drop_hint_mobile': '点击选择 .db 和 .txt 文件',
+    'file_drop_formats': '支持：.db（对局数据）+ .txt（地图副档，可选）',
   },
 };
 

@@ -25,12 +25,17 @@ export const ALL_PERSONAL_EVENT_TYPES: PersonalEventType[] = [
 interface HotspotFilterState {
   /** Show hotspot debug circles on the map */
   debugOverlay: boolean;
+  /** Master switch — when false, ALL hotspots are hidden regardless of
+   *  per-type filters. Toggling it back on restores the previous per-type
+   *  selection without resetting anything. */
+  masterEnabled: boolean;
   /** Per-type visibility filters (true = visible) */
   typeFilters: Record<HotspotType, boolean>;
   /** Per-personal-event-type visibility filters (used when manually following a unit) */
   personalTypeFilters: Record<PersonalEventType, boolean>;
 
   toggleDebugOverlay: () => void;
+  toggleMasterEnabled: () => void;
   toggleTypeFilter: (type: HotspotType) => void;
   setTypeFilter: (type: HotspotType, enabled: boolean) => void;
   togglePersonalTypeFilter: (type: PersonalEventType) => void;
@@ -38,6 +43,7 @@ interface HotspotFilterState {
 
 export const useHotspotFilter = create<HotspotFilterState>((set) => ({
   debugOverlay: false,
+  masterEnabled: true,
   typeFilters: {
     firefight: true,
     killstreak: true,
@@ -56,6 +62,8 @@ export const useHotspotFilter = create<HotspotFilterState>((set) => ({
   },
 
   toggleDebugOverlay: () => set((s) => ({ debugOverlay: !s.debugOverlay })),
+
+  toggleMasterEnabled: () => set((s) => ({ masterEnabled: !s.masterEnabled })),
 
   toggleTypeFilter: (type) =>
     set((s) => ({

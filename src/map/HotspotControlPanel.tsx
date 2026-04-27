@@ -45,6 +45,7 @@ const DEFAULT_CLASSNAME =
 export function HotspotControlPanel({ className }: HotspotControlPanelProps = {}) {
   const {
     debugOverlay, toggleDebugOverlay,
+    masterEnabled, toggleMasterEnabled,
     typeFilters, toggleTypeFilter,
     personalTypeFilters, togglePersonalTypeFilter,
   } = useHotspotFilter();
@@ -92,15 +93,28 @@ export function HotspotControlPanel({ className }: HotspotControlPanelProps = {}
         <span>{t('debug_overlay')}</span>
       </button>
 
+      {/* Master toggle — one click to disable/enable ALL hotspots */}
+      <button
+        onClick={toggleMasterEnabled}
+        className={`w-full flex items-center gap-2 px-2 py-1 rounded text-left text-[11px] font-medium transition-colors mb-1.5 ${
+          masterEnabled
+            ? 'bg-emerald-700/50 text-emerald-200 border border-emerald-600/50'
+            : 'bg-zinc-800/80 text-zinc-500 border border-zinc-700 hover:text-zinc-300'
+        }`}
+      >
+        <span className="text-sm">{masterEnabled ? '●' : '○'}</span>
+        <span>{t('hotspot_master_toggle')}</span>
+      </button>
+
       {/* Separator */}
       <div className="border-t border-zinc-700 my-1.5" />
 
       {isPersonalMode ? (
         <>
-          <div className="text-emerald-500 text-[10px] uppercase tracking-wider mb-1">
+          <div className={`text-[10px] uppercase tracking-wider mb-1 ${masterEnabled ? 'text-emerald-500' : 'text-zinc-600'}`}>
             {t('personal_event_filter')}
           </div>
-          <div className="space-y-0.5">
+          <div className={`space-y-0.5 ${masterEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
             {ALL_PERSONAL_EVENT_TYPES.map((type) => {
               const enabled = personalTypeFilters[type];
               const count = personalCounts[type] || 0;
@@ -130,10 +144,10 @@ export function HotspotControlPanel({ className }: HotspotControlPanelProps = {}
         </>
       ) : (
         <>
-          <div className="text-zinc-500 text-[10px] uppercase tracking-wider mb-1">
+          <div className={`text-[10px] uppercase tracking-wider mb-1 ${masterEnabled ? 'text-zinc-500' : 'text-zinc-600'}`}>
             {t('hotspot_filter')}
           </div>
-          <div className="space-y-0.5">
+          <div className={`space-y-0.5 ${masterEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
             {ALL_HOTSPOT_TYPES.map((type) => {
               const enabled = typeFilters[type];
               const count = typeCounts[type] || 0;

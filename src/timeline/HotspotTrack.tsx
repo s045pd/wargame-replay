@@ -81,7 +81,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { meta, allHotspots: rawHotspots, allKills, currentTs, seek, selectedUnitId, followSelectedUnit, manualFollow } = usePlayback();
-  const { typeFilters, personalTypeFilters } = useHotspotFilter();
+  const { masterEnabled, typeFilters, personalTypeFilters } = useHotspotFilter();
   const { t } = useI18n();
   const [tooltip, setTooltip] = useState<
     | { x: number; y: number; kind: 'hotspot'; hs: HotspotEvent }
@@ -91,18 +91,20 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
 
   const isPersonalMode = selectedUnitId !== null && followSelectedUnit && manualFollow;
 
-  // In non-personal mode, apply per-type visibility filters to hotspots.
-  // In personal mode we switch to individual combat events (below) and this
-  // list is unused by the draw path.
+  // In non-personal mode, apply master switch + per-type visibility filters
+  // to hotspots. In personal mode we switch to individual combat events
+  // (below) and this list is unused by the draw path.
   const hotspots = useMemo(
-    () => rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters]),
-    [rawHotspots, typeFilters],
+    () => masterEnabled
+      ? rawHotspots.filter((hs) => typeFilters[hs.type as keyof typeof typeFilters])
+      : [],
+    [rawHotspots, masterEnabled, typeFilters],
   );
 
   // Individual combat-event marks for the followed unit, grouped and ordered
   // by render priority so stronger signals (kills, being killed) draw on top.
   const personalMarks = useMemo(() => {
-    if (!isPersonalMode || selectedUnitId == null) return [] as PersonalMark[];
+    if (!isPersonalMode || !masterEnabled || selectedUnitId == null) return [] as PersonalMark[];
     const marks: PersonalMark[] = [];
     for (const ev of allKills) {
       const type = classifyPersonalEvent(ev, selectedUnitId);
@@ -112,7 +114,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     }
     marks.sort((a, b) => PERSONAL_TYPE_PRIORITY[a.type] - PERSONAL_TYPE_PRIORITY[b.type]);
     return marks;
-  }, [isPersonalMode, selectedUnitId, allKills, personalTypeFilters]);
+  }, [isPersonalMode, masterEnabled, selectedUnitId, allKills, personalTypeFilters]);
 
   const startMs = useMemo(() => (meta ? parseTs(meta.startTime) : 0), [meta]);
   const endMs = useMemo(() => (meta ? parseTs(meta.endTime) : 0), [meta]);

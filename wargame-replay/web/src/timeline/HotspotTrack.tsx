@@ -330,7 +330,7 @@ export function HotspotTrack({ height, labelWidth }: HotspotTrackProps) {
     setPersonalTooltip(null);
   };
 
-  const labelColor = isPersonalMode ? '#22cc88' : '#ef4444';
+  const labelColor = isPersonalMode ? '#a855f7' : '#ef4444';
 
   return (
     <div className="flex items-stretch border-b border-zinc-800" style={{ height }}>

@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useClips, Clip } from '../store/clips';
 import { usePlayback } from '../store/playback';
 import { useHotspotFilter } from '../store/hotspotFilter';
 import { useI18n } from '../lib/i18n';
 import { ExportDialog } from './ExportDialog';
+import { createStoreZip } from '../lib/zip';
+import { recordClip } from './recording';
 
 interface ClipEditorProps {
   onClose: () => void;
@@ -44,6 +46,15 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
   // Auto-highlight + bulk export state
   const [highlightLoading, setHighlightLoading] = useState(false);
   const [autoToast, setAutoToast] = useState<string | null>(null);
+
+  // Bulk video export state
+  type BulkState =
+    | { phase: 'idle' }
+    | { phase: 'recording'; current: number; total: number; title: string; speed: number }
+    | { phase: 'zipping'; total: number }
+    | { phase: 'done'; total: number };
+  const [bulkState, setBulkState] = useState<BulkState>({ phase: 'idle' });
+  const bulkAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
   useEffect(() => {
     if (!gameId) return;
@@ -97,36 +108,79 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     }
   };
 
-  // Bulk export all clips as JSON manifest (timestamps + metadata)
-  const handleBulkExport = () => {
-    if (clips.length === 0) return;
-    const manifest = {
-      game: {
-        id: gameId,
-        startTime: meta?.startTime,
-        endTime: meta?.endTime,
-        coordMode: meta?.coordMode,
-      },
-      exportedAt: new Date().toISOString(),
-      count: clips.length,
-      clips: clips.map((c) => ({
-        startTs: c.startTs,
-        endTs: c.endTs,
-        title: c.title,
-        speed: c.speed,
-        tags: c.tags,
-      })),
-    };
-    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const stem = (gameId ?? 'clips').replace(/[^\w-]/g, '_');
-    a.download = `${stem}_clips_${clips.length}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  // Bulk video export: record each clip as .webm, zip them all up, download.
+  const handleBulkVideoExport = async () => {
+    if (clips.length === 0 || bulkState.phase !== 'idle') return;
+
+    // Estimate real-time duration so the user can decide whether to commit.
+    const exportSpeed = 8; // game-time multiplier; balances speed vs intelligibility
+    let totalGameSec = 0;
+    for (const c of clips) {
+      const s = new Date(c.startTs.replace(' ', 'T')).getTime();
+      const e = new Date(c.endTs.replace(' ', 'T')).getTime();
+      totalGameSec += Math.max(0, (e - s) / 1000);
+    }
+    const estimatedRealMin = Math.ceil((totalGameSec / exportSpeed + clips.length * 1.2) / 60);
+    const confirmMsg = (t('bulk_export_confirm') || 'Record {n} clips at {speed}× speed. Estimated time: ~{min} min. Continue?')
+      .replace('{n}', String(clips.length))
+      .replace('{speed}', String(exportSpeed))
+      .replace('{min}', String(estimatedRealMin));
+    if (!window.confirm(confirmMsg)) return;
+
+    bulkAbortRef.current = { aborted: false };
+    const blobs: { name: string; data: Uint8Array }[] = [];
+
+    try {
+      for (let i = 0; i < clips.length; i++) {
+        if (bulkAbortRef.current.aborted) break;
+        const c = clips[i]!;
+        setBulkState({
+          phase: 'recording',
+          current: i + 1,
+          total: clips.length,
+          title: c.title,
+          speed: exportSpeed,
+        });
+        const blob = await recordClip(c, {
+          speed: exportSpeed,
+          abortSignal: bulkAbortRef.current,
+        });
+        if (!blob || bulkAbortRef.current.aborted) break;
+        const safeTitle = c.title.replace(/[^\w一-龥-]/g, '_').slice(0, 40) || 'clip';
+        const seq = String(i + 1).padStart(3, '0');
+        blobs.push({
+          name: `${seq}_${safeTitle}.webm`,
+          data: new Uint8Array(await blob.arrayBuffer()),
+        });
+      }
+
+      if (blobs.length === 0) {
+        setBulkState({ phase: 'idle' });
+        return;
+      }
+
+      setBulkState({ phase: 'zipping', total: blobs.length });
+      const zipBlob = createStoreZip(blobs);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stem = (gameId ?? 'clips').replace(/[^\w-]/g, '_');
+      a.download = `${stem}_clips_${blobs.length}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setBulkState({ phase: 'done', total: blobs.length });
+      setTimeout(() => setBulkState({ phase: 'idle' }), 3000);
+    } catch (e: unknown) {
+      setError(String(e));
+      setBulkState({ phase: 'idle' });
+    }
+  };
+
+  const handleBulkCancel = () => {
+    bulkAbortRef.current.aborted = true;
   };
 
   const handleStartEdit = (idx: number) => {
@@ -192,9 +246,10 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
           </button>
           {clips.length > 0 && (
             <button
-              onClick={handleBulkExport}
-              className="text-xs px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
-              title={t('bulk_export_desc') || 'Export all clips as a JSON manifest'}
+              onClick={() => void handleBulkVideoExport()}
+              disabled={bulkState.phase !== 'idle'}
+              className="text-xs px-2 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded transition-colors"
+              title={t('bulk_export_desc') || 'Record all clips as videos and pack into a zip'}
             >
               📦 {t('bulk_export') || 'Export All'}
             </button>
@@ -337,6 +392,65 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
           clipTitle={clips[exportIdx]?.title ?? ''}
           onClose={() => setExportIdx(null)}
         />
+      )}
+
+      {/* Bulk video export progress overlay */}
+      {bulkState.phase !== 'idle' && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[420px] max-w-[90vw] p-6">
+            <h3 className="text-sm font-bold text-zinc-100 tracking-wider mb-3">
+              📦 {t('bulk_export') || 'Export All'}
+            </h3>
+
+            {bulkState.phase === 'recording' && (
+              <>
+                <div className="text-xs text-zinc-400 mb-2">
+                  {(t('bulk_export_recording') || 'Recording {i}/{n} · {speed}× speed')
+                    .replace('{i}', String(bulkState.current))
+                    .replace('{n}', String(bulkState.total))
+                    .replace('{speed}', String(bulkState.speed))}
+                </div>
+                <div className="text-sm text-emerald-400 truncate mb-3" title={bulkState.title}>
+                  {bulkState.title}
+                </div>
+                <div className="w-full h-2 bg-zinc-800 rounded overflow-hidden mb-4">
+                  <div
+                    className="h-full bg-emerald-600 transition-all"
+                    style={{ width: `${(bulkState.current / bulkState.total) * 100}%` }}
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleBulkCancel}
+                    className="text-xs px-3 py-1 bg-red-900/60 hover:bg-red-800 text-red-200 rounded transition-colors"
+                  >
+                    {t('cancel') || 'Cancel'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-3">
+                  {t('bulk_export_hint') || 'Do not switch tabs or the recording may pause.'}
+                </p>
+              </>
+            )}
+
+            {bulkState.phase === 'zipping' && (
+              <>
+                <div className="text-xs text-zinc-400 mb-2">
+                  {(t('bulk_export_packing') || 'Packing {n} clips into a zip…').replace('{n}', String(bulkState.total))}
+                </div>
+                <div className="w-full h-2 bg-zinc-800 rounded overflow-hidden">
+                  <div className="h-full bg-emerald-600 animate-pulse w-full" />
+                </div>
+              </>
+            )}
+
+            {bulkState.phase === 'done' && (
+              <div className="text-sm text-emerald-400">
+                ✓ {(t('bulk_export_done') || 'Exported {n} clips').replace('{n}', String(bulkState.total))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

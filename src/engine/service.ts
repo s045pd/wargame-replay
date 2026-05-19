@@ -19,6 +19,25 @@ interface HpEntry { ts: string; hp: number }
 const ACCUM_WINDOW = 7;
 const FALLBACK_WINDOW = 120;
 
+// Maximum age (in seconds) for a hit/heal event to override position-record HP.
+// Position records cycle through units every few seconds, so HP from flags[0]
+// may lag slightly. We use the event timeline to "fill in" that gap. But if
+// the most recent event is much older than the current frame's timestamp, it
+// usually means either (a) the unit was revived/respawned without a recorded
+// revive event or (b) HP was restored by an untracked mechanism. In either
+// case the position HP is authoritative — trust it. 10s safely covers
+// position lag without picking up stale events from previous lives.
+const HP_EVENT_MAX_AGE_SEC = 10;
+
+/** Compare two "YYYY-MM-DD HH:MM:SS" timestamps; returns true if eventTs is
+ *  within HP_EVENT_MAX_AGE_SEC of frameTs. Returns false on parse failure. */
+function eventIsRecent(eventTs: string, frameTs: string): boolean {
+  const et = Date.parse(eventTs.replace(' ', 'T'));
+  const ft = Date.parse(frameTs.replace(' ', 'T'));
+  if (Number.isNaN(et) || Number.isNaN(ft)) return false;
+  return (ft - et) / 1000 <= HP_EVENT_MAX_AGE_SEC;
+}
+
 export class GameService {
   private db: Database;
   private idx: TimeIndex;
@@ -278,23 +297,35 @@ export class GameService {
       }
       u.name = this.players.get(u.id) ?? '';
 
-      // HP reconciliation via binary search
-      const timeline = this.hpTimeline.get(u.id);
-      if (timeline && timeline.length > 0) {
-        let lo = 0, hi = timeline.length - 1, bestIdx = -1;
-        while (lo <= hi) {
-          const mid = (lo + hi) >>> 1;
-          if (timeline[mid]!.ts <= actualTs) { bestIdx = mid; lo = mid + 1; }
-          else hi = mid - 1;
-        }
-        if (bestIdx >= 0) {
-          const eventHP = timeline[bestIdx]!.hp;
-          if (u.alive) {
-            if (eventHP > 0) u.hp = eventHP;
-            // else: event HP=0 but alive → revived, keep HP=100
-          } else {
-            u.hp = 0;
+      // HP reconciliation: position flags[0] is the primary HP source.
+      // Event timeline only overrides when (a) position says dead, or (b) the
+      // event is RECENT and shows lower HP than position. Stale events are
+      // ignored — they likely come from a previous life (revive/respawn
+      // between the event and now) or HP that has since been restored by an
+      // untracked mechanism. See HP_EVENT_MAX_AGE_SEC.
+      if (!u.alive) {
+        u.hp = 0;
+      } else {
+        const timeline = this.hpTimeline.get(u.id);
+        if (timeline && timeline.length > 0) {
+          let lo = 0, hi = timeline.length - 1, bestIdx = -1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >>> 1;
+            if (timeline[mid]!.ts <= actualTs) { bestIdx = mid; lo = mid + 1; }
+            else hi = mid - 1;
           }
+          if (bestIdx >= 0 && eventIsRecent(timeline[bestIdx]!.ts, actualTs)) {
+            const eventHP = timeline[bestIdx]!.hp;
+            if (eventHP === 0) {
+              // Event says killed but position says alive → revived silently.
+              // Trust position HP.
+            } else if (eventHP < u.hp) {
+              // Event shows lower HP than position → position is stale,
+              // event is fresher. Use the lower value.
+              u.hp = eventHP;
+            }
+          }
+          // else: no event, or event too old → trust position HP.
         }
       }
 

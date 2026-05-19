@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import type * as maplibregl from 'maplibre-gl';
 import { useClips } from '../store/clips';
 import { usePlayback } from '../store/playback';
 import { useI18n } from '../lib/i18n';
+import { drawGraticuleLabelsToCanvas } from '../map/GraticuleLayer';
 
 interface ExportDialogProps {
   gameId: string;
@@ -30,6 +32,25 @@ function pickMimeType(): string {
   return 'video/webm';
 }
 
+/** Get the MapLibre map instance from the global maplibregl internal */
+function getMapInstance(): maplibregl.Map | null {
+  const canvas = document.querySelector('.mapboxgl-canvas') as HTMLCanvasElement | null;
+  if (!canvas) return null;
+  const container = canvas.closest('.maplibregl-map') as HTMLElement | null;
+  if (!container && (canvas as unknown as { _maplibre_map?: maplibregl.Map })._maplibre_map) {
+    return (canvas as unknown as { _maplibre_map: maplibregl.Map })._maplibre_map;
+  }
+  if (container) {
+    const anyContainer = container as unknown as Record<string, unknown>;
+    for (const key of Object.keys(anyContainer)) {
+      if (key.startsWith('_') && anyContainer[key] && typeof (anyContainer[key] as Record<string, unknown>).getCenter === 'function') {
+        return anyContainer[key] as unknown as maplibregl.Map;
+      }
+    }
+  }
+  return null;
+}
+
 export function ExportDialog({ gameId, clipIdx, clipTitle, onClose }: ExportDialogProps) {
   const { exportClip, clips } = useClips();
   const { t } = useI18n();
@@ -45,6 +66,8 @@ export function ExportDialog({ gameId, clipIdx, clipTitle, onClose }: ExportDial
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const blobUrlRef = useRef<string | null>(null);
+  const compositeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animFrameRef = useRef<number>(0);
 
   const safeName = clipTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || `clip_${clipIdx}`;
 
@@ -73,39 +96,68 @@ export function ExportDialog({ gameId, clipIdx, clipTitle, onClose }: ExportDial
     }
   };
 
-  // --- Video recording ---
+  // --- Video recording with composite canvas (map + grid labels) ---
   const handleStartRecording = useCallback(() => {
     if (!clip) return;
     setError(null);
     setRecordState('preparing');
     setProgress(0);
 
-    // Find the map canvas
-    const canvas = document.querySelector('.mapboxgl-canvas') as HTMLCanvasElement;
-    if (!canvas) {
-      // Fallback: try to find any canvas in the main area
-      const fallback = document.querySelector('canvas') as HTMLCanvasElement;
-      if (!fallback) {
-        setError('Cannot find map canvas for recording');
-        setRecordState('idle');
-        return;
-      }
+    const mapCanvas = (document.querySelector('.mapboxgl-canvas') || document.querySelector('canvas')) as HTMLCanvasElement;
+    if (!mapCanvas) {
+      setError('Cannot find map canvas for recording');
+      setRecordState('idle');
+      return;
     }
-
-    const targetCanvas = (document.querySelector('.mapboxgl-canvas') || document.querySelector('canvas')) as HTMLCanvasElement;
 
     // Seek to clip start
     const { seek, play } = usePlayback.getState();
     seek(clip.startTs);
 
-    // Wait for seek to settle, then start recording
     setTimeout(() => {
       try {
-        const stream = targetCanvas.captureStream(30);
+        // Create composite canvas that overlays grid labels on top of map
+        const { meta } = usePlayback.getState();
+        const hasGraticule = !!(meta?.graticule && meta?.bounds);
+
+        let recordCanvas: HTMLCanvasElement;
+
+        if (hasGraticule) {
+          const composite = document.createElement('canvas');
+          composite.width = mapCanvas.width;
+          composite.height = mapCanvas.height;
+          compositeCanvasRef.current = composite;
+          recordCanvas = composite;
+
+          // Render loop: composite map + grid labels each frame
+          const renderComposite = () => {
+            const ctx = composite.getContext('2d');
+            if (!ctx) return;
+            if (composite.width !== mapCanvas.width || composite.height !== mapCanvas.height) {
+              composite.width = mapCanvas.width;
+              composite.height = mapCanvas.height;
+            }
+            ctx.clearRect(0, 0, composite.width, composite.height);
+            ctx.drawImage(mapCanvas, 0, 0);
+
+            const currentMeta = usePlayback.getState().meta;
+            const mapInstance = getMapInstance();
+            if (currentMeta?.graticule && mapInstance) {
+              drawGraticuleLabelsToCanvas(composite, mapInstance, currentMeta.graticule, currentMeta.bounds);
+            }
+
+            animFrameRef.current = requestAnimationFrame(renderComposite);
+          };
+          renderComposite();
+        } else {
+          recordCanvas = mapCanvas;
+        }
+
+        const stream = recordCanvas.captureStream(30);
         const mimeType = pickMimeType();
         const recorder = new MediaRecorder(stream, {
           mimeType,
-          videoBitsPerSecond: 8_000_000, // 8 Mbps for good quality
+          videoBitsPerSecond: 8_000_000,
         });
 
         chunksRef.current = [];
@@ -117,18 +169,20 @@ export function ExportDialog({ gameId, clipIdx, clipTitle, onClose }: ExportDial
           const blob = new Blob(chunksRef.current, { type: 'video/webm' });
           const url = URL.createObjectURL(blob);
           blobUrlRef.current = url;
+          cancelAnimationFrame(animFrameRef.current);
+          compositeCanvasRef.current = null;
           setRecordState('done');
         };
 
         recorderRef.current = recorder;
-        recorder.start(200); // 200ms timeslice
+        recorder.start(200);
         play(clip.speed || 64);
         setRecordState('recording');
       } catch (e: unknown) {
         setError(String(e));
         setRecordState('idle');
       }
-    }, 1500); // 1.5s delay for seek to render
+    }, 1500);
   }, [clip]);
 
   // Monitor playback progress to auto-stop at clip end
@@ -192,6 +246,7 @@ export function ExportDialog({ gameId, clipIdx, clipTitle, onClose }: ExportDial
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
       }
+      cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
 

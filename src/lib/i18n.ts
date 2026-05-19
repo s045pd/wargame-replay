@@ -172,6 +172,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'free_tiles_short': '(Free)',
     'current_provider': 'Current source',
 
+    // Auto highlight
+    'auto_highlight': 'Auto',
+    'auto_highlight_desc': 'Auto-generate highlight clips for tracked unit',
+    'highlights_found': 'highlights found',
+    'import_all': 'Import All',
+    'auto_highlight_hint': 'Track a unit and press ⚡ Auto to generate highlights',
+    'events': 'events',
+
     // Misc
     'score': 'score',
     'kills': 'kills',
@@ -652,6 +660,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'free_tiles': '免费瓦片',
     'free_tiles_short': '(免费)',
     'current_provider': '当前瓦片源',
+
+    // Auto highlight
+    'auto_highlight': '自动',
+    'auto_highlight_desc': '根据跟踪单位自动生成高光片段',
+    'highlights_found': '条高光',
+    'import_all': '全部导入',
+    'auto_highlight_hint': '跟踪一个单位后按 ⚡ 自动 生成高光片段',
+    'events': '事件',
 
     // Misc
     'score': '分数',

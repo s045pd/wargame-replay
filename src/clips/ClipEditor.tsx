@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useClips, Clip } from '../store/clips';
+import { useClips, Clip, Highlight } from '../store/clips';
 import { usePlayback } from '../store/playback';
+import { useHotspotFilter } from '../store/hotspotFilter';
+import { useI18n } from '../lib/i18n';
 import { ExportDialog } from './ExportDialog';
 
 interface ClipEditorProps {
@@ -27,8 +29,10 @@ function addMinutes(ts: string, minutes: number): string {
 }
 
 export function ClipEditor({ onClose }: ClipEditorProps) {
-  const { gameId, currentTs, meta } = usePlayback();
-  const { clips, loadClips, addClip, updateClip, deleteClip } = useClips();
+  const { gameId, currentTs, meta, selectedUnitId } = usePlayback();
+  const { clips, loadClips, addClip, updateClip, deleteClip, loadHighlights, importHighlightsAsClips } = useClips();
+  const { personalTypeFilters } = useHotspotFilter();
+  const { t } = useI18n();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +40,11 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
   const [editTitle, setEditTitle] = useState('');
   const [editSpeed, setEditSpeed] = useState(1);
   const [exportIdx, setExportIdx] = useState<number | null>(null);
+
+  // Auto-highlight state
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [highlightLoading, setHighlightLoading] = useState(false);
+  const [showHighlights, setShowHighlights] = useState(false);
 
   useEffect(() => {
     if (!gameId) return;
@@ -59,6 +68,60 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     } catch (e: unknown) {
       setError(String(e));
     }
+  };
+
+  // Auto-generate highlights for the currently tracked unit
+  const handleAutoHighlight = async () => {
+    if (!gameId || selectedUnitId === null) return;
+    setHighlightLoading(true);
+    setError(null);
+    try {
+      const enabledTypes: string[] = [];
+      for (const [key, enabled] of Object.entries(personalTypeFilters)) {
+        if (enabled) enabledTypes.push(key);
+      }
+      const result = await loadHighlights(gameId, selectedUnitId, enabledTypes);
+      setHighlights(result);
+      setShowHighlights(true);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setHighlightLoading(false);
+    }
+  };
+
+  const handleImportAll = async () => {
+    if (!gameId || highlights.length === 0) return;
+    setHighlightLoading(true);
+    try {
+      await importHighlightsAsClips(gameId, highlights);
+      setShowHighlights(false);
+      setHighlights([]);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setHighlightLoading(false);
+    }
+  };
+
+  const handleImportOne = async (h: Highlight) => {
+    if (!gameId) return;
+    try {
+      await addClip(gameId, {
+        startTs: h.startTs,
+        endTs: h.endTs,
+        title: h.title,
+        speed: 1,
+        tags: ['auto', ...h.tags],
+      });
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  };
+
+  const handleSeekTs = (ts: string) => {
+    const { seek } = usePlayback.getState();
+    seek(ts);
   };
 
   const handleStartEdit = (idx: number) => {
@@ -105,6 +168,16 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
         <h2 className="text-sm font-bold text-zinc-100 tracking-wider">CLIPS</h2>
         <div className="flex items-center gap-2">
+          {selectedUnitId !== null && (
+            <button
+              onClick={() => void handleAutoHighlight()}
+              disabled={highlightLoading}
+              className="text-xs px-2 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded transition-colors"
+              title={t('auto_highlight_desc') || 'Auto-generate highlight clips for tracked unit'}
+            >
+              {highlightLoading ? '...' : '⚡ ' + (t('auto_highlight') || 'Auto')}
+            </button>
+          )}
           <button
             onClick={() => void handleNewClip()}
             className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
@@ -129,6 +202,57 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
         </div>
       )}
 
+      {/* Auto-highlights preview */}
+      {showHighlights && highlights.length > 0 && (
+        <div className="border-b border-zinc-700">
+          <div className="flex items-center justify-between px-4 py-2 bg-amber-900/20">
+            <span className="text-xs font-semibold text-amber-400">
+              {highlights.length} {t('highlights_found') || 'highlights found'}
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void handleImportAll()}
+                disabled={highlightLoading}
+                className="text-xs px-2 py-0.5 bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors"
+              >
+                {t('import_all') || 'Import All'}
+              </button>
+              <button
+                onClick={() => setShowHighlights(false)}
+                className="text-xs px-2 py-0.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded transition-colors"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <ul className="max-h-48 overflow-y-auto divide-y divide-zinc-800">
+            {highlights.map((h, i) => (
+              <li key={i} className="px-4 py-2 hover:bg-zinc-800/50 flex items-center gap-2">
+                <button
+                  onClick={() => handleSeekTs(h.startTs)}
+                  className="flex-1 text-left min-w-0"
+                >
+                  <div className="text-xs font-mono text-amber-400 truncate">
+                    {h.startTs.slice(11, 19)} – {h.endTs.slice(11, 19)}
+                  </div>
+                  <div className="text-sm text-zinc-200 truncate">{h.title}</div>
+                  <div className="text-xs text-zinc-500">
+                    {t('score') || 'Score'}: {h.score.toFixed(0)} · {h.events.length} {t('events') || 'events'}
+                  </div>
+                </button>
+                <button
+                  onClick={() => void handleImportOne(h)}
+                  className="text-xs px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded transition-colors flex-shrink-0"
+                  title="Import as clip"
+                >
+                  +
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
@@ -138,7 +262,11 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
         ) : clips.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-24 text-zinc-500 text-xs">
             <p>No clips yet.</p>
-            <p className="mt-1 text-zinc-600">Press "New Clip" to create one.</p>
+            <p className="mt-1 text-zinc-600">
+              {selectedUnitId !== null
+                ? (t('auto_highlight_hint') || 'Track a unit and press ⚡ Auto to generate highlights')
+                : 'Press "New Clip" to create one.'}
+            </p>
           </div>
         ) : (
           <ul className="divide-y divide-zinc-800">

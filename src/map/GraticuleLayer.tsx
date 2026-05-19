@@ -133,10 +133,14 @@ interface EdgeLabel {
   px: number; // pixel position along the axis
 }
 
+const LABEL_CLS = 'text-[11px] font-mono font-semibold text-white/60 bg-black/50 rounded px-1 py-px';
+
 export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) {
   const gridRef = useRef(computeGridData(graticule, bounds));
   const [topLabels, setTopLabels] = useState<EdgeLabel[]>([]);
+  const [bottomLabels, setBottomLabels] = useState<EdgeLabel[]>([]);
   const [leftLabels, setLeftLabels] = useState<EdgeLabel[]>([]);
+  const [rightLabels, setRightLabels] = useState<EdgeLabel[]>([]);
 
   // Recompute grid data when props change
   useEffect(() => {
@@ -170,28 +174,34 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
     const h = canvas.clientHeight;
     const center = map.getCenter();
 
-    // Row zone labels (1, 2, 3 …) pinned to LEFT edge:
+    // Row zone labels (1, 2, 3 …) on LEFT + RIGHT edges:
     // project [center.lng, midLat] to get screen-Y for each zone centre
     const newLeft: EdgeLabel[] = [];
+    const newRight: EdgeLabel[] = [];
     for (const r of rowZones) {
       const pt = map.project([center.lng, r.midLat]);
       if (pt.y >= 0 && pt.y <= h) {
-        newLeft.push({ key: `rz-${r.label}`, label: r.label, px: pt.y });
+        newLeft.push({ key: `rz-l-${r.label}`, label: r.label, px: pt.y });
+        newRight.push({ key: `rz-r-${r.label}`, label: r.label, px: pt.y });
       }
     }
 
-    // Column zone labels (A, B, C …) pinned to TOP edge:
+    // Column zone labels (A, B, C …) on TOP + BOTTOM edges:
     // project [midLng, center.lat] to get screen-X for each zone centre
     const newTop: EdgeLabel[] = [];
+    const newBottom: EdgeLabel[] = [];
     for (const c of colZones) {
       const pt = map.project([c.midLng, center.lat]);
       if (pt.x >= 0 && pt.x <= w) {
-        newTop.push({ key: `cz-${c.label}`, label: c.label, px: pt.x });
+        newTop.push({ key: `cz-t-${c.label}`, label: c.label, px: pt.x });
+        newBottom.push({ key: `cz-b-${c.label}`, label: c.label, px: pt.x });
       }
     }
 
     setLeftLabels(newLeft);
+    setRightLabels(newRight);
     setTopLabels(newTop);
+    setBottomLabels(newBottom);
   }, [map]);
 
   // Mount lines + listen for map move to update edge labels
@@ -223,38 +233,127 @@ export function GraticuleLayer({ map, graticule, bounds }: GraticuleLayerProps) 
 
   return (
     <>
-      {/* Column zone labels (A, B, C …) — pinned to top edge, centred in zone */}
+      {/* Column zone labels — TOP edge */}
       {topLabels.map((l) => (
         <div
           key={l.key}
           className="absolute z-10 pointer-events-none select-none"
-          style={{
-            top: 4,
-            left: l.px,
-            transform: 'translateX(-50%)',
-          }}
+          style={{ top: 4, left: l.px, transform: 'translateX(-50%)' }}
         >
-          <span className="text-[10px] font-mono text-white/30 bg-black/30 rounded px-1">
-            {l.label}
-          </span>
+          <span className={LABEL_CLS}>{l.label}</span>
         </div>
       ))}
-      {/* Row zone labels (1, 2, 3 …) — pinned to left edge, centred in zone */}
+      {/* Column zone labels — BOTTOM edge */}
+      {bottomLabels.map((l) => (
+        <div
+          key={l.key}
+          className="absolute z-10 pointer-events-none select-none"
+          style={{ bottom: 4, left: l.px, transform: 'translateX(-50%)' }}
+        >
+          <span className={LABEL_CLS}>{l.label}</span>
+        </div>
+      ))}
+      {/* Row zone labels — LEFT edge */}
       {leftLabels.map((l) => (
         <div
           key={l.key}
           className="absolute z-10 pointer-events-none select-none"
-          style={{
-            left: 4,
-            top: l.px,
-            transform: 'translateY(-50%)',
-          }}
+          style={{ left: 4, top: l.px, transform: 'translateY(-50%)' }}
         >
-          <span className="text-[10px] font-mono text-white/30 bg-black/30 rounded px-1">
-            {l.label}
-          </span>
+          <span className={LABEL_CLS}>{l.label}</span>
+        </div>
+      ))}
+      {/* Row zone labels — RIGHT edge */}
+      {rightLabels.map((l) => (
+        <div
+          key={l.key}
+          className="absolute z-10 pointer-events-none select-none"
+          style={{ right: 4, top: l.px, transform: 'translateY(-50%)' }}
+        >
+          <span className={LABEL_CLS}>{l.label}</span>
         </div>
       ))}
     </>
   );
+}
+
+/** Draw grid labels directly onto a canvas (for video export).
+ *  Call after rendering the map frame. */
+export function drawGraticuleLabelsToCanvas(
+  canvas: HTMLCanvasElement,
+  map: mapboxgl.Map,
+  graticule: Graticule,
+  bounds?: GameMeta['bounds'],
+) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const grid = computeGridData(graticule, bounds);
+  const w = canvas.width;
+  const h = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const center = map.getCenter();
+
+  ctx.save();
+  ctx.font = `600 ${11 * dpr}px ui-monospace, monospace`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  const pad = 12 * dpr;
+
+  // Column labels (A, B, C …) — top + bottom
+  for (const c of grid.colZones) {
+    const pt = map.project([c.midLng, center.lat]);
+    const x = pt.x * dpr;
+    if (x < 0 || x > w) continue;
+
+    const metrics = ctx.measureText(c.label);
+    const tw = metrics.width + 6 * dpr;
+    const th = 14 * dpr;
+
+    // Top
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(x - tw / 2, pad - th / 2, tw, th, 3 * dpr);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(c.label, x, pad);
+
+    // Bottom
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(x - tw / 2, h - pad - th / 2, tw, th, 3 * dpr);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(c.label, x, h - pad);
+  }
+
+  // Row labels (1, 2, 3 …) — left + right
+  for (const r of grid.rowZones) {
+    const pt = map.project([center.lng, r.midLat]);
+    const y = pt.y * dpr;
+    if (y < 0 || y > h) continue;
+
+    const metrics = ctx.measureText(r.label);
+    const tw = metrics.width + 6 * dpr;
+    const th = 14 * dpr;
+
+    // Left
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(pad - tw / 2, y - th / 2, tw, th, 3 * dpr);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(r.label, pad, y);
+
+    // Right
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(w - pad - tw / 2, y - th / 2, tw, th, 3 * dpr);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(r.label, w - pad, y);
+  }
+
+  ctx.restore();
 }

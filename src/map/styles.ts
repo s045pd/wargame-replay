@@ -137,7 +137,11 @@ const CARTO_VOYAGER: StyleSpecification = {
   glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
 };
 
-/** ESRI World Imagery — satellite tiles, free */
+/** ESRI World Imagery — satellite tiles, free, retina-sharpened.
+ *  ESRI serves native 256px tiles with no @2x variant. tileSize:128 makes
+ *  MapLibre request tiles one zoom level higher than with 256, so each
+ *  256px image covers only 128 CSS px (= 256 device px on 2× retina)
+ *  giving a 1:1 pixel mapping. Trade-off: ~3-4× more tile requests. */
 const ESRI_SATELLITE: StyleSpecification = {
   version: 8,
   sources: {
@@ -146,7 +150,8 @@ const ESRI_SATELLITE: StyleSpecification = {
       tiles: [
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       ],
-      tileSize: 256,
+      tileSize: 128,
+      maxzoom: 19,
       attribution: '&copy; Esri',
     },
   },

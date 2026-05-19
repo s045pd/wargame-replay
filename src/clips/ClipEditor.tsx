@@ -32,7 +32,7 @@ function addMinutes(ts: string, minutes: number): string {
 
 export function ClipEditor({ onClose }: ClipEditorProps) {
   const { gameId, currentTs, meta, selectedUnitId } = usePlayback();
-  const { clips, loadClips, addClip, updateClip, deleteClip, loadHighlights, importHighlightsAsClips } = useClips();
+  const { clips, loadClips, addClip, updateClip, deleteClip, clearClips, loadHighlights, importHighlightsAsClips } = useClips();
   const { personalTypeFilters } = useHotspotFilter();
   const { t } = useI18n();
 
@@ -64,6 +64,49 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setLoading(false));
   }, [gameId, loadClips]);
+
+  // Filter clips against the Hotspot panel's personal-event toggles so that
+  // when a user turns off (e.g.) "kill" hotspots, those clips disappear from
+  // the list and from bulk export — without deleting them.
+  //
+  // A highlight clip usually carries multiple tags (a kill clip has both
+  // 'kill' and 'hit' because the kill is the final shot of a hit sequence).
+  // We pick the DOMINANT tag (strongest event in this priority order) and
+  // use it as the clip's category. So "Kill: X" is filtered by p_kill even
+  // though the clip also has 'hit' in its tags.
+  // Manual ("+ New Clip") entries have no personal tags and are always shown.
+  const DOMINANT_ORDER = ['kill', 'killed', 'hit', 'hit_recv', 'heal', 'revive'] as const;
+  const dominantOf = (tags: string[]): typeof DOMINANT_ORDER[number] | null => {
+    for (const k of DOMINANT_ORDER) {
+      if (tags.includes(k)) return k;
+    }
+    return null;
+  };
+  const isClipVisible = (c: Clip): boolean => {
+    const dom = dominantOf(c.tags);
+    if (dom === null) return true;
+    return personalTypeFilters[`p_${dom}` as keyof typeof personalTypeFilters];
+  };
+  // Pair each visible clip with its ORIGINAL index in `clips`, since edit /
+  // delete / export-single operations are index-based.
+  const visiblePairs: Array<{ clip: Clip; origIdx: number }> = [];
+  clips.forEach((c, i) => {
+    if (isClipVisible(c)) visiblePairs.push({ clip: c, origIdx: i });
+  });
+  const hiddenCount = clips.length - visiblePairs.length;
+
+  const handleClearAll = async () => {
+    if (!gameId || clips.length === 0) return;
+    const msg = (t('clear_clips_confirm') || 'Delete all {n} clips? This cannot be undone.')
+      .replace('{n}', String(clips.length));
+    if (!window.confirm(msg)) return;
+    try {
+      await clearClips(gameId);
+      setEditingIdx(null);
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+  };
 
   const handleNewClip = async () => {
     if (!gameId) return;
@@ -110,7 +153,9 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
 
   // Bulk video export: record each clip as .webm, zip them all up, download.
   const handleBulkVideoExport = async () => {
-    if (clips.length === 0 || bulkState.phase !== 'idle') return;
+    // Only export VISIBLE clips — clips hidden by the hotspot filter are skipped.
+    const exportClips = visiblePairs.map((p) => p.clip);
+    if (exportClips.length === 0 || bulkState.phase !== 'idle') return;
 
     // We require a tracked unit so the camera can lock onto it during
     // recording — otherwise the auto-director would frame the full hotspot
@@ -124,14 +169,14 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     // Estimate real-time duration so the user can decide whether to commit.
     const exportSpeed = 8; // game-time multiplier; balances speed vs intelligibility
     let totalGameSec = 0;
-    for (const c of clips) {
+    for (const c of exportClips) {
       const s = new Date(c.startTs.replace(' ', 'T')).getTime();
       const e = new Date(c.endTs.replace(' ', 'T')).getTime();
       totalGameSec += Math.max(0, (e - s) / 1000);
     }
-    const estimatedRealMin = Math.ceil((totalGameSec / exportSpeed + clips.length * 1.2) / 60);
+    const estimatedRealMin = Math.ceil((totalGameSec / exportSpeed + exportClips.length * 1.2) / 60);
     const confirmMsg = (t('bulk_export_confirm') || 'Record {n} clips at {speed}× speed. Estimated time: ~{min} min. Continue?')
-      .replace('{n}', String(clips.length))
+      .replace('{n}', String(exportClips.length))
       .replace('{speed}', String(exportSpeed))
       .replace('{min}', String(estimatedRealMin));
     if (!window.confirm(confirmMsg)) return;
@@ -140,13 +185,13 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     const blobs: { name: string; data: Uint8Array }[] = [];
 
     try {
-      for (let i = 0; i < clips.length; i++) {
+      for (let i = 0; i < exportClips.length; i++) {
         if (bulkAbortRef.current.aborted) break;
-        const c = clips[i]!;
+        const c = exportClips[i]!;
         setBulkState({
           phase: 'recording',
           current: i + 1,
-          total: clips.length,
+          total: exportClips.length,
           title: c.title,
           speed: exportSpeed,
         });
@@ -255,7 +300,7 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
           >
             + New Clip
           </button>
-          {clips.length > 0 && (
+          {visiblePairs.length > 0 && (
             <button
               onClick={() => void handleBulkVideoExport()}
               disabled={bulkState.phase !== 'idle'}
@@ -263,6 +308,15 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
               title={t('bulk_export_desc') || 'Record all clips as videos and pack into a zip'}
             >
               📦 {t('bulk_export') || 'Export All'}
+            </button>
+          )}
+          {clips.length > 0 && (
+            <button
+              onClick={() => void handleClearAll()}
+              className="text-xs px-2 py-1 bg-red-900/60 hover:bg-red-800 text-red-200 rounded transition-colors"
+              title={t('clear_clips_desc') || 'Delete all clips'}
+            >
+              🗑 {t('clear_clips') || 'Clear'}
             </button>
           )}
           <button
@@ -274,6 +328,22 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
           </button>
         </div>
       </div>
+
+      {/* Count summary */}
+      {clips.length > 0 && (
+        <div className="px-4 py-1.5 border-b border-zinc-800 text-[11px] text-zinc-500 flex items-center justify-between">
+          <span>
+            {(t('clips_count_summary') || '{visible} / {total} clips')
+              .replace('{visible}', String(visiblePairs.length))
+              .replace('{total}', String(clips.length))}
+          </span>
+          {hiddenCount > 0 && (
+            <span className="text-zinc-600">
+              {(t('clips_hidden_by_filter') || '{n} hidden by hotspot filter').replace('{n}', String(hiddenCount))}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -304,9 +374,16 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
                 : 'Press "New Clip" to create one.'}
             </p>
           </div>
+        ) : visiblePairs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-24 text-zinc-500 text-xs px-4 text-center">
+            <p>{t('clips_all_hidden') || 'All clips are hidden by hotspot filter.'}</p>
+            <p className="mt-1 text-zinc-600">
+              {t('clips_all_hidden_hint') || 'Re-enable an event type in the hotspot panel to show them.'}
+            </p>
+          </div>
         ) : (
           <ul className="divide-y divide-zinc-800">
-            {clips.map((clip, idx) => (
+            {visiblePairs.map(({ clip, origIdx: idx }) => (
               <li key={idx} className="group px-4 py-3 hover:bg-zinc-800 transition-colors">
                 {editingIdx === idx ? (
                   /* Edit mode */

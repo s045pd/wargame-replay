@@ -50,6 +50,7 @@ interface ClipsState {
   addClip: (gameId: string, clip: Clip) => Promise<void>;
   updateClip: (gameId: string, idx: number, clip: Clip) => Promise<void>;
   deleteClip: (gameId: string, idx: number) => Promise<void>;
+  clearClips: (gameId: string) => Promise<void>;
   exportClip: (gameId: string, idx: number, full?: boolean) => Promise<ClipExport>;
 
   // Auto-highlight generation (pure frontend — uses playback.allKills)
@@ -262,6 +263,11 @@ export const useClips = create<ClipsState>((set, get) => ({
     const updated = get().clips.filter((_, i) => i !== idx);
     writeLS(lsKey(gameId, 'clips'), updated);
     set({ clips: updated });
+  },
+
+  clearClips: async (gameId) => {
+    writeLS(lsKey(gameId, 'clips'), []);
+    set({ clips: [] });
   },
 
   exportClip: async (_gameId, idx) => {

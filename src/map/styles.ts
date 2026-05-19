@@ -151,7 +151,11 @@ const ESRI_SATELLITE: StyleSpecification = {
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       ],
       tileSize: 128,
-      maxzoom: 19,
+      // ESRI World Imagery often has no tiles beyond z=17 in rural / water areas
+      // (returns the "Map data not yet available" placeholder). Capping the
+      // source maxzoom lets MapLibre overzoom existing tiles instead of
+      // requesting nonexistent ones — looks slightly soft but never empty.
+      maxzoom: 17,
       attribution: '&copy; Esri',
     },
   },

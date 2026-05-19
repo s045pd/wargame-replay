@@ -105,7 +105,7 @@ function jitteredCooldown(): number {
  */
 export function useHotspotDirector() {
   // ── Reactive values (gate effect execution) ──
-  const { allHotspots: hotspots, currentTs, playing, coordMode, speed } = usePlayback();
+  const { allHotspots: hotspots, currentTs, playing, coordMode, speed, isRecording } = usePlayback();
   const { autoMode, mode } = useDirector();
   const manualOverride = useDirector(s => s.manualOverride);
   const { masterEnabled, typeFilters } = useHotspotFilter();
@@ -178,7 +178,9 @@ export function useHotspotDirector() {
     // ── Guard: not active ──
     // Director tracking only runs in 'director' mode.
     // Switching to 'replay' clears all tracking (follow, focus, slowdown).
-    if (!autoMode || !playing || !currentTs || mode !== 'director') {
+    // Also stand down while a clip is being recorded — the recording code
+    // takes over camera state to lock onto the followed unit.
+    if (!autoMode || !playing || !currentTs || mode !== 'director' || isRecording) {
       fullCleanup();
       return;
     }
@@ -494,5 +496,5 @@ export function useHotspotDirector() {
       dir.setTargetCamera({ x: best.centerLng, y: best.centerLat, zoom: 8 });
     }
     dir.recordSwitch();
-  }, [autoMode, manualOverride, playing, currentTs, parsedHotspots, coordMode, mode, fullCleanup]);
+  }, [autoMode, manualOverride, playing, currentTs, parsedHotspots, coordMode, mode, isRecording, fullCleanup]);
 }

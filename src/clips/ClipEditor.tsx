@@ -112,6 +112,15 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
   const handleBulkVideoExport = async () => {
     if (clips.length === 0 || bulkState.phase !== 'idle') return;
 
+    // We require a tracked unit so the camera can lock onto it during
+    // recording — otherwise the auto-director would frame the full hotspot
+    // circle and the video would be too wide.
+    if (selectedUnitId === null) {
+      setError(t('bulk_export_need_unit') || 'Track a unit first (the camera will follow it during recording).');
+      return;
+    }
+    const followUnitId = selectedUnitId;
+
     // Estimate real-time duration so the user can decide whether to commit.
     const exportSpeed = 8; // game-time multiplier; balances speed vs intelligibility
     let totalGameSec = 0;
@@ -144,8 +153,10 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
         const blob = await recordClip(c, {
           speed: exportSpeed,
           abortSignal: bulkAbortRef.current,
+          followUnitId,
         });
-        if (!blob || bulkAbortRef.current.aborted) break;
+        if (bulkAbortRef.current.aborted) break;
+        if (!blob) continue; // skipped (e.g. no canvas)
         const safeTitle = c.title.replace(/[^\w一-龥-]/g, '_').slice(0, 40) || 'clip';
         const seq = String(i + 1).padStart(3, '0');
         blobs.push({

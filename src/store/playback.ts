@@ -88,6 +88,8 @@ interface PlaybackState {
   selectedUnitId: number | null;
   followSelectedUnit: boolean;
   manualFollow: boolean;
+  /** True while a clip is being recorded — auto-director must yield. */
+  isRecording: boolean;
 
   // Visual effect toggles
   killLineEnabled: boolean;
@@ -120,6 +122,7 @@ interface PlaybackState {
   setSelectedUnitId: (id: number | null) => void;
   setFollowSelectedUnit: (follow: boolean) => void;
   setManualFollow: (manual: boolean) => void;
+  setIsRecording: (recording: boolean) => void;
   setKillLineEnabled: (enabled: boolean) => void;
   setHitLineEnabled: (enabled: boolean) => void;
   setReviveEffectEnabled: (enabled: boolean) => void;
@@ -179,6 +182,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   selectedUnitId: null,
   followSelectedUnit: false,
   manualFollow: false,
+  isRecording: false,
   killLineEnabled: _prefs.killLineEnabled ?? true,
   hitLineEnabled: _prefs.hitLineEnabled ?? true,
   reviveEffectEnabled: _prefs.reviveEffectEnabled ?? true,
@@ -330,6 +334,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setSelectedUnitId: (id) => set(id === null ? { selectedUnitId: null, manualFollow: false } : { selectedUnitId: id }),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),
   setManualFollow: (manual) => set({ manualFollow: manual }),
+  setIsRecording: (recording) => set({ isRecording: recording }),
   setKillLineEnabled: (enabled) => { set({ killLineEnabled: enabled }); savePrefs({ killLineEnabled: enabled }); },
   setHitLineEnabled: (enabled) => { set({ hitLineEnabled: enabled }); savePrefs({ hitLineEnabled: enabled }); },
   setReviveEffectEnabled: (enabled) => { set({ reviveEffectEnabled: enabled }); savePrefs({ reviveEffectEnabled: enabled }); },

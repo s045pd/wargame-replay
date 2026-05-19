@@ -227,7 +227,12 @@ export default function App() {
             onToggleBookmarks={() => setShowBookmarks(prev => !prev)}
           />
         ) : (
-          <TopBar onShowShortcuts={() => setShowShortcuts(true)} onShowSettings={() => setShowSettings(true)} />
+          <TopBar
+            onShowShortcuts={() => setShowShortcuts(true)}
+            onShowSettings={() => setShowSettings(true)}
+            onToggleClips={() => setShowClipEditor((p) => !p)}
+            clipsOpen={showClipEditor}
+          />
         )
       )}
 

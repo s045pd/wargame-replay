@@ -176,9 +176,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'auto_highlight': 'Auto',
     'auto_highlight_desc': 'Auto-generate highlight clips for tracked unit',
     'highlights_found': 'highlights found',
+    'highlights_added': 'Added {n} highlights',
+    'no_highlights_found': 'No highlights found for this unit',
     'import_all': 'Import All',
     'auto_highlight_hint': 'Track a unit and press ⚡ Auto to generate highlights',
     'events': 'events',
+    'bulk_export': 'Export All',
+    'bulk_export_desc': 'Export all clips as a JSON manifest',
+    'clips_btn': 'Clips',
+    'clips_btn_title': 'Toggle clips panel (C)',
 
     // Misc
     'score': 'score',
@@ -665,9 +671,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'auto_highlight': '自动',
     'auto_highlight_desc': '根据跟踪单位自动生成高光片段',
     'highlights_found': '条高光',
+    'highlights_added': '已添加 {n} 条高光',
+    'no_highlights_found': '该单位暂无高光片段',
     'import_all': '全部导入',
     'auto_highlight_hint': '跟踪一个单位后按 ⚡ 自动 生成高光片段',
     'events': '事件',
+    'bulk_export': '打包导出',
+    'bulk_export_desc': '将所有片段打包导出为 JSON 清单',
+    'clips_btn': '片段',
+    'clips_btn_title': '切换片段面板 (C)',
 
     // Misc
     'score': '分数',

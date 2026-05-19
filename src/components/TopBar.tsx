@@ -7,9 +7,11 @@ import { PlayerSearch } from '../map/PlayerSearch';
 interface TopBarProps {
   onShowShortcuts?: () => void;
   onShowSettings?: () => void;
+  onToggleClips?: () => void;
+  clipsOpen?: boolean;
 }
 
-export function TopBar({ onShowShortcuts, onShowSettings }: TopBarProps) {
+export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOpen }: TopBarProps) {
   const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
@@ -154,6 +156,19 @@ export function TopBar({ onShowShortcuts, onShowSettings }: TopBarProps) {
         >
           {t('director')}
         </button>
+        {onToggleClips && (
+          <button
+            onClick={onToggleClips}
+            className={`px-3 py-1 text-xs rounded transition-colors ${
+              clipsOpen
+                ? 'bg-emerald-600 text-white'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+            }`}
+            title={t('clips_btn_title') || 'Toggle clips panel (C)'}
+          >
+            {t('clips_btn') || 'Clips'}
+          </button>
+        )}
       </div>
     </div>
   );

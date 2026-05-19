@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useClips, Clip, Highlight } from '../store/clips';
+import { useClips, Clip } from '../store/clips';
 import { usePlayback } from '../store/playback';
 import { useHotspotFilter } from '../store/hotspotFilter';
 import { useI18n } from '../lib/i18n';
@@ -41,10 +41,9 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
   const [editSpeed, setEditSpeed] = useState(1);
   const [exportIdx, setExportIdx] = useState<number | null>(null);
 
-  // Auto-highlight state
-  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  // Auto-highlight + bulk export state
   const [highlightLoading, setHighlightLoading] = useState(false);
-  const [showHighlights, setShowHighlights] = useState(false);
+  const [autoToast, setAutoToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (!gameId) return;
@@ -70,19 +69,27 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     }
   };
 
-  // Auto-generate highlights for the currently tracked unit
+  // Auto-generate highlights and add directly to clip list (no preview step)
   const handleAutoHighlight = async () => {
     if (!gameId || selectedUnitId === null) return;
     setHighlightLoading(true);
     setError(null);
+    setAutoToast(null);
     try {
       const enabledTypes: string[] = [];
       for (const [key, enabled] of Object.entries(personalTypeFilters)) {
         if (enabled) enabledTypes.push(key);
       }
       const result = await loadHighlights(gameId, selectedUnitId, enabledTypes);
-      setHighlights(result);
-      setShowHighlights(true);
+      if (result.length === 0) {
+        setAutoToast(t('no_highlights_found') || 'No highlights found for this unit');
+      } else {
+        await importHighlightsAsClips(gameId, result);
+        setAutoToast(
+          (t('highlights_added') || 'Added {n} highlights').replace('{n}', String(result.length))
+        );
+      }
+      setTimeout(() => setAutoToast(null), 3500);
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -90,38 +97,36 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
     }
   };
 
-  const handleImportAll = async () => {
-    if (!gameId || highlights.length === 0) return;
-    setHighlightLoading(true);
-    try {
-      await importHighlightsAsClips(gameId, highlights);
-      setShowHighlights(false);
-      setHighlights([]);
-    } catch (e: unknown) {
-      setError(String(e));
-    } finally {
-      setHighlightLoading(false);
-    }
-  };
-
-  const handleImportOne = async (h: Highlight) => {
-    if (!gameId) return;
-    try {
-      await addClip(gameId, {
-        startTs: h.startTs,
-        endTs: h.endTs,
-        title: h.title,
-        speed: 1,
-        tags: ['auto', ...h.tags],
-      });
-    } catch (e: unknown) {
-      setError(String(e));
-    }
-  };
-
-  const handleSeekTs = (ts: string) => {
-    const { seek } = usePlayback.getState();
-    seek(ts);
+  // Bulk export all clips as JSON manifest (timestamps + metadata)
+  const handleBulkExport = () => {
+    if (clips.length === 0) return;
+    const manifest = {
+      game: {
+        id: gameId,
+        startTime: meta?.startTime,
+        endTime: meta?.endTime,
+        coordMode: meta?.coordMode,
+      },
+      exportedAt: new Date().toISOString(),
+      count: clips.length,
+      clips: clips.map((c) => ({
+        startTs: c.startTs,
+        endTs: c.endTs,
+        title: c.title,
+        speed: c.speed,
+        tags: c.tags,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stem = (gameId ?? 'clips').replace(/[^\w-]/g, '_');
+    a.download = `${stem}_clips_${clips.length}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleStartEdit = (idx: number) => {
@@ -185,6 +190,15 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
           >
             + New Clip
           </button>
+          {clips.length > 0 && (
+            <button
+              onClick={handleBulkExport}
+              className="text-xs px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
+              title={t('bulk_export_desc') || 'Export all clips as a JSON manifest'}
+            >
+              📦 {t('bulk_export') || 'Export All'}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="text-zinc-400 hover:text-zinc-100 text-lg leading-none transition-colors"
@@ -202,54 +216,10 @@ export function ClipEditor({ onClose }: ClipEditorProps) {
         </div>
       )}
 
-      {/* Auto-highlights preview */}
-      {showHighlights && highlights.length > 0 && (
-        <div className="border-b border-zinc-700">
-          <div className="flex items-center justify-between px-4 py-2 bg-amber-900/20">
-            <span className="text-xs font-semibold text-amber-400">
-              {highlights.length} {t('highlights_found') || 'highlights found'}
-            </span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => void handleImportAll()}
-                disabled={highlightLoading}
-                className="text-xs px-2 py-0.5 bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors"
-              >
-                {t('import_all') || 'Import All'}
-              </button>
-              <button
-                onClick={() => setShowHighlights(false)}
-                className="text-xs px-2 py-0.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded transition-colors"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-          <ul className="max-h-48 overflow-y-auto divide-y divide-zinc-800">
-            {highlights.map((h, i) => (
-              <li key={i} className="px-4 py-2 hover:bg-zinc-800/50 flex items-center gap-2">
-                <button
-                  onClick={() => handleSeekTs(h.startTs)}
-                  className="flex-1 text-left min-w-0"
-                >
-                  <div className="text-xs font-mono text-amber-400 truncate">
-                    {h.startTs.slice(11, 19)} – {h.endTs.slice(11, 19)}
-                  </div>
-                  <div className="text-sm text-zinc-200 truncate">{h.title}</div>
-                  <div className="text-xs text-zinc-500">
-                    {t('score') || 'Score'}: {h.score.toFixed(0)} · {h.events.length} {t('events') || 'events'}
-                  </div>
-                </button>
-                <button
-                  onClick={() => void handleImportOne(h)}
-                  className="text-xs px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded transition-colors flex-shrink-0"
-                  title="Import as clip"
-                >
-                  +
-                </button>
-              </li>
-            ))}
-          </ul>
+      {/* Auto-highlight toast */}
+      {autoToast && (
+        <div className="mx-4 mt-2 px-3 py-2 bg-amber-900/40 border border-amber-700/60 rounded text-xs text-amber-200">
+          {autoToast}
         </div>
       )}
 

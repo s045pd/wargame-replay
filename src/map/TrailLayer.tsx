@@ -132,6 +132,10 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
   const rafRef = useRef<number>(0);
   const isAnimatingRef = useRef(false);
   const prevEventsRef = useRef<GameEvent[]>([]);
+  /** Last-known position per unit ID. Lets us still draw a tracer when the
+   *  shooter or victim is missing from the current frame's units snapshot
+   *  (sliding-window gaps + sparse position reports cause those misses). */
+  const lastSeenPosRef = useRef<Map<number, { lng: number; lat: number; ms: number }>>(new Map());
 
   // ---------- setup source + layers ----------
   useEffect(() => {
@@ -284,6 +288,28 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
     }
 
     const now = performance.now();
+    // Refresh last-seen position cache from this frame's units.
+    for (const u of units) {
+      if (u.lng !== undefined && u.lat !== undefined) {
+        lastSeenPosRef.current.set(u.id, { lng: u.lng, lat: u.lat, ms: now });
+      }
+    }
+    // Coords for an event endpoint: prefer current frame, fall back to cache
+    // if the unit is missing (sparse position reports / sliding-window edge).
+    // Reject stale cache entries (>30s) to avoid huge phantom tracers.
+    const STALE_MS = 30_000;
+    const lookupPos = (id: number | undefined): { lng: number; lat: number } | null => {
+      if (id === undefined) return null;
+      const live = unitMap.get(id);
+      if (live && live.lng !== undefined && live.lat !== undefined) {
+        return { lng: live.lng, lat: live.lat };
+      }
+      const cached = lastSeenPosRef.current.get(id);
+      if (cached && now - cached.ms < STALE_MS) {
+        return { lng: cached.lng, lat: cached.lat };
+      }
+      return null;
+    };
     let addedCount = 0;
 
     // Pre-compute focus-related unit set for O(1) lookup
@@ -301,30 +327,30 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
       // Respect per-type toggles
       if (ev.type === 'kill' && !killLineEnabled) continue;
       if (ev.type === 'hit' && !hitLineEnabled) continue;
-      const src = unitMap.get(ev.src);
-      const dst = ev.dst !== undefined ? unitMap.get(ev.dst) : undefined;
-      if (!src || !dst) continue;
-      if (src.lng === undefined || src.lat === undefined) continue;
-      if (dst.lng === undefined || dst.lat === undefined) continue;
+      // Skip environmental damage / unknown shooter (src=0 means no shooter).
+      if (!ev.src) continue;
+      const srcPos = lookupPos(ev.src);
+      const dstPos = lookupPos(ev.dst);
+      if (!srcPos || !dstPos) continue;
 
       // Mark tracers from the followed unit as green
-      const isFollowed = selectedUnitId != null && src.id === selectedUnitId;
+      const isFollowed = selectedUnitId != null && ev.src === selectedUnitId;
 
       // Focus mode: dim tracers from non-related units
       let focusDim = 1.0;
       if (focusActive) {
-        const srcIsRelated = src.id === focusUnitId || focusRelatedSet.has(src.id);
-        const dstIsRelated = dst.id === focusUnitId || focusRelatedSet.has(dst.id);
+        const srcIsRelated = ev.src === focusUnitId || focusRelatedSet.has(ev.src);
+        const dstIsRelated = ev.dst === focusUnitId || (ev.dst !== undefined && focusRelatedSet.has(ev.dst));
         if (!srcIsRelated && !dstIsRelated) {
           focusDim = 0.06; // almost invisible
         }
       }
 
       tracersRef.current.push({
-        srcLng: src.lng,
-        srcLat: src.lat,
-        dstLng: dst.lng,
-        dstLat: dst.lat,
+        srcLng: srcPos.lng,
+        srcLat: srcPos.lat,
+        dstLng: dstPos.lng,
+        dstLat: dstPos.lat,
         isKill: ev.type === 'kill',
         isFollowed,
         startTime: now + addedCount * 60,

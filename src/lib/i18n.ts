@@ -127,6 +127,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'search_placeholder': 'Player name or ID...',
     'search_hint': 'Type to search players',
     'no_results': 'No matching players',
+    'label_filter_toggle': 'Quick name filter — show only matching labels on the map',
+    'label_filter_placeholder': 'Filter names...',
 
     // Shortcuts
     'shortcut_help': 'Shortcuts',
@@ -636,6 +638,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'search_placeholder': '输入玩家名或 ID...',
     'search_hint': '输入关键字搜索玩家',
     'no_results': '无匹配玩家',
+    'label_filter_toggle': '快速过滤显示 — 只在地图上显示匹配名字的标签',
+    'label_filter_placeholder': '过滤名字...',
 
     // Shortcuts
     'shortcut_help': '快捷键',

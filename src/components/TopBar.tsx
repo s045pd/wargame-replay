@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
@@ -12,11 +13,23 @@ interface TopBarProps {
 }
 
 export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOpen }: TopBarProps) {
-  const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow } = usePlayback();
+  const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow, labelFilter, setLabelFilter } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
 
   const isGeoMode = coordMode === 'wgs84';
+
+  // Quick label-filter input — opens next to PlayerSearch on toggle, clears
+  // the filter when closed so the rest of the app reverts to default labels.
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (filterOpen) filterInputRef.current?.focus();
+  }, [filterOpen]);
+  const closeFilter = () => {
+    setLabelFilter('');
+    setFilterOpen(false);
+  };
 
   return (
     <div className="h-12 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-4">
@@ -43,6 +56,32 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
       {meta && meta.players.length > 0 && (
         <>
           <div className="h-4 w-px bg-zinc-700" />
+          {/* Quick label-filter: toggle reveals an input that filters which
+              unit names render on the map in real time. */}
+          <button
+            onClick={() => (filterOpen ? closeFilter() : setFilterOpen(true))}
+            className={`w-6 h-6 flex items-center justify-center rounded text-xs transition-colors border ${
+              filterOpen || labelFilter
+                ? 'bg-sky-700 text-sky-100 border-sky-600'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-700'
+            }`}
+            title={t('label_filter_toggle')}
+            aria-pressed={filterOpen || !!labelFilter}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707L14 14v6l-4-2v-4L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+          </button>
+          {filterOpen && (
+            <input
+              ref={filterInputRef}
+              value={labelFilter}
+              onChange={(e) => setLabelFilter(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') closeFilter(); }}
+              placeholder={t('label_filter_placeholder')}
+              className="w-32 bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-sky-600"
+            />
+          )}
           <PlayerSearch
             players={meta.players}
             onSelect={(id) => {

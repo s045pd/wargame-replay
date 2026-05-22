@@ -89,6 +89,8 @@ interface PlaybackState {
   selectedUnitId: number | null;
   followSelectedUnit: boolean;
   manualFollow: boolean;
+  /** Quick name filter — non-empty hides labels of non-matching units. Transient. */
+  labelFilter: string;
   /** True while a clip is being recorded — auto-director must yield. */
   isRecording: boolean;
 
@@ -123,6 +125,7 @@ interface PlaybackState {
   setSelectedUnitId: (id: number | null) => void;
   setFollowSelectedUnit: (follow: boolean) => void;
   setManualFollow: (manual: boolean) => void;
+  setLabelFilter: (text: string) => void;
   setIsRecording: (recording: boolean) => void;
   setKillLineEnabled: (enabled: boolean) => void;
   setHitLineEnabled: (enabled: boolean) => void;
@@ -195,6 +198,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   selectedUnitId: null,
   followSelectedUnit: false,
   manualFollow: false,
+  labelFilter: '',
   isRecording: false,
   killLineEnabled: _prefs.killLineEnabled ?? true,
   hitLineEnabled: _prefs.hitLineEnabled ?? true,
@@ -351,6 +355,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     savePrefs({ tiltMode: next });
   },
   setSelectedUnitId: (id) => set(id === null ? { selectedUnitId: null, manualFollow: false } : { selectedUnitId: id }),
+  setLabelFilter: (text) => set({ labelFilter: text }),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),
   setManualFollow: (manual) => set({ manualFollow: manual }),
   setIsRecording: (recording) => set({ isRecording: recording }),

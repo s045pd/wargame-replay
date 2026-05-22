@@ -239,7 +239,16 @@ function buildAnimatedGeoJson(
         }
 
         // --- Focus mode visual adjustments ---
-        let showLabel = vcState.showUnitLabel ? 1 : 0;
+        // Quick label filter: non-empty string overrides showUnitLabel and only
+        // shows labels for units whose name (case-insensitive) contains it.
+        const filter = (pbFx.labelFilter ?? '').trim().toLowerCase();
+        let showLabel: number;
+        if (filter) {
+          const unitName = (u.name || `#${u.id}`).toLowerCase();
+          showLabel = unitName.includes(filter) ? 1 : 0;
+        } else {
+          showLabel = vcState.showUnitLabel ? 1 : 0;
+        }
         let deadIconOpacity = vcState.deadOpacity; // default dead unit opacity from config
         // Apply dead unit display mode
         if (vcState.deadUnitDisplay === 'hide') {
@@ -842,6 +851,26 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
       }
     } catch { /* ignore */ }
   }, [map, selectionRing]);
+
+  // Force a label re-evaluation when the quick filter changes, even if the
+  // animation loop is currently idle (e.g. playback paused).
+  const labelFilter = usePlayback(s => s.labelFilter);
+  useEffect(() => {
+    try {
+      const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+      if (!source) return;
+      source.setData(
+        buildAnimatedGeoJson(
+          unitsRef.current,
+          selectedRef.current,
+          visualStatesRef.current,
+          performance.now(),
+          POS_LERP_MS,
+          focusInfoRef.current,
+        ),
+      );
+    } catch { /* ignore */ }
+  }, [map, labelFilter]);
 
   return null;
 }

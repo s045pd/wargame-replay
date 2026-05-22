@@ -236,12 +236,29 @@ function createDeadIcon(drawFn: DrawFn, deadFill: string, deadStroke: string, ic
  * Icon name convention:
  * - Alive with HP: `unit-{team}-{class}-hp{level}` e.g. `unit-red-rifle-hp80`
  * - Dead: `unit-{team}-{class}-dead`
+ * - Tagged (overrides team color, no HP gradient): `unit-tag-{tagColor}-{class}[-dead]`
  */
-export function iconName(team: string, cls: UnitClass, dead = false, hp = 100): string {
+export function iconName(team: string, cls: UnitClass, dead = false, hp = 100, tagColor?: string): string {
+  if (tagColor) return `unit-tag-${tagColor}-${cls}${dead ? '-dead' : ''}`;
   if (dead) return `unit-${team}-${cls}-dead`;
   // Snap HP to nearest 10
   const level = Math.max(0, Math.min(100, Math.round(hp / 10) * 10));
   return `unit-${team}-${cls}-hp${level}`;
+}
+
+/** Palette of quick-tag colors. Keep short — each color registers
+ *  5 classes × 2 (alive/dead) extra icons. */
+export const TAG_COLORS: { key: string; hex: string; label: string }[] = [
+  { key: 'purple', hex: '#a855f7', label: '紫' },
+  { key: 'orange', hex: '#f97316', label: '橙' },
+  { key: 'yellow', hex: '#eab308', label: '黄' },
+  { key: 'green',  hex: '#22c55e', label: '绿' },
+  { key: 'pink',   hex: '#ec4899', label: '粉' },
+  { key: 'cyan',   hex: '#06b6d4', label: '青' },
+];
+
+export function tagColorHex(key: string): string {
+  return TAG_COLORS.find(c => c.key === key)?.hex ?? '#ffffff';
 }
 
 /**
@@ -305,6 +322,33 @@ export function registerUnitIcons(map: mapboxgl.Map, config?: Partial<IconConfig
       // Dead icon
       const deadId = `unit-${team}-${cls}-dead`;
       const deadImg = createDeadIcon(drawFn, colors.deadFill, colors.deadStroke, iconSize);
+      if (map.hasImage(deadId)) {
+        map.updateImage(deadId, deadImg);
+      } else {
+        map.addImage(deadId, deadImg, { pixelRatio: 2 });
+      }
+    }
+  }
+
+  // Tag-color icon variants — flat fill (no HP gradient) per class
+  for (const tag of TAG_COLORS) {
+    const fill = tag.hex;
+    const stroke = lighten(fill);
+    const deadFill = darken(fill);
+    const deadStroke = lighten(deadFill);
+    for (const cls of classes) {
+      const drawFn = DRAW_MAP[cls];
+
+      const aliveId = `unit-tag-${tag.key}-${cls}`;
+      const aliveImg = createDeadIcon(drawFn, fill, stroke, iconSize); // flat fill at full opacity
+      if (map.hasImage(aliveId)) {
+        map.updateImage(aliveId, aliveImg);
+      } else {
+        map.addImage(aliveId, aliveImg, { pixelRatio: 2 });
+      }
+
+      const deadId = `unit-tag-${tag.key}-${cls}-dead`;
+      const deadImg = createDeadIcon(drawFn, deadFill, deadStroke, iconSize);
       if (map.hasImage(deadId)) {
         map.updateImage(deadId, deadImg);
       } else {

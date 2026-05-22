@@ -129,6 +129,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'no_results': 'No matching players',
     'label_filter_toggle': 'Quick name filter — show only matching labels on the map',
     'label_filter_placeholder': 'Filter names...',
+    'label_filter_tag_with': 'Tag',
+    'label_filter_tags_popover': 'Tags',
+    'label_filter_clear_color': 'Clear this color',
+    'label_filter_clear_all': 'Clear all tags',
 
     // Shortcuts
     'shortcut_help': 'Shortcuts',
@@ -640,6 +644,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'no_results': '无匹配玩家',
     'label_filter_toggle': '快速过滤显示 — 只在地图上显示匹配名字的标签',
     'label_filter_placeholder': '过滤名字...',
+    'label_filter_tag_with': '上色',
+    'label_filter_tags_popover': '色标',
+    'label_filter_clear_color': '清除此色',
+    'label_filter_clear_all': '清除全部色标',
 
     // Shortcuts
     'shortcut_help': '快捷键',

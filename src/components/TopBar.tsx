@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
 import { useI18n } from '../lib/i18n';
 import { ALL_STYLE_KEYS, MapStyleKey } from '../map/styles';
 import { PlayerSearch } from '../map/PlayerSearch';
+import { TAG_COLORS } from '../map/unitIcons';
+import { transformFilteredName } from '../lib/labelTransform';
 
 interface TopBarProps {
   onShowShortcuts?: () => void;
@@ -13,7 +15,12 @@ interface TopBarProps {
 }
 
 export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOpen }: TopBarProps) {
-  const { meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode, resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow, labelFilter, setLabelFilter } = usePlayback();
+  const {
+    meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode,
+    resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow,
+    labelFilter, setLabelFilter,
+    unitTags, setUnitTagsBatch, clearUnitTagsByColor, clearAllUnitTags,
+  } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
 
@@ -22,6 +29,8 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
   // Quick label-filter input — opens next to PlayerSearch on toggle, clears
   // the filter when closed so the rest of the app reverts to default labels.
   const [filterOpen, setFilterOpen] = useState(false);
+  const [palettePopover, setPalettePopover] = useState(false);
+  const [tagsPopover, setTagsPopover] = useState(false);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (filterOpen) filterInputRef.current?.focus();
@@ -29,6 +38,39 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
   const closeFilter = () => {
     setLabelFilter('');
     setFilterOpen(false);
+    setPalettePopover(false);
+  };
+
+  // Players whose name matches the current filter — drives the palette CTA.
+  const filterMatches = useMemo(() => {
+    const f = labelFilter.trim().toLowerCase();
+    if (!f || !meta) return [] as { id: number; name: string }[];
+    return meta.players
+      .filter(p => p.name.toLowerCase().includes(f))
+      .map(p => ({ id: p.id, name: p.name }));
+  }, [labelFilter, meta]);
+
+  // Active tag colors with their unit counts — for the tags popover.
+  const tagSummary = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tag of Object.values(unitTags)) {
+      counts[tag.color] = (counts[tag.color] ?? 0) + 1;
+    }
+    return TAG_COLORS
+      .filter(c => counts[c.key] > 0)
+      .map(c => ({ ...c, count: counts[c.key] }));
+  }, [unitTags]);
+
+  const applyTagToMatches = (colorKey: string) => {
+    if (filterMatches.length === 0) return;
+    const patch: Record<number, { color: string; name: string }> = {};
+    const f = labelFilter.trim();
+    for (const m of filterMatches) {
+      patch[m.id] = { color: colorKey, name: transformFilteredName(m.name, f) || m.name };
+    }
+    setUnitTagsBatch(patch);
+    setLabelFilter('');
+    setPalettePopover(false);
   };
 
   return (
@@ -81,6 +123,93 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
               placeholder={t('label_filter_placeholder')}
               className="w-32 bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-sky-600"
             />
+          )}
+          {/* Color palette dropdown — enabled when current filter has matches. */}
+          {filterOpen && (
+            <div className="relative">
+              <button
+                onClick={() => setPalettePopover((v) => !v)}
+                disabled={filterMatches.length === 0}
+                className={`px-1.5 h-6 flex items-center gap-1 rounded text-[11px] transition-colors border ${
+                  filterMatches.length === 0
+                    ? 'bg-zinc-800/50 text-zinc-600 border-zinc-800 cursor-not-allowed'
+                    : palettePopover
+                      ? 'bg-zinc-700 text-zinc-100 border-zinc-600'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                }`}
+                title={t('label_filter_tag_with')}
+              >
+                {t('label_filter_tag_with')}
+                <span className="text-zinc-500">{filterMatches.length}</span>
+              </button>
+              {palettePopover && filterMatches.length > 0 && (
+                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 flex gap-1.5">
+                  {TAG_COLORS.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => applyTagToMatches(c.key)}
+                      className="w-5 h-5 rounded-full border border-zinc-800 hover:scale-110 transition-transform"
+                      style={{ backgroundColor: c.hex }}
+                      title={`${c.label} · ${filterMatches.length}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Tags summary popover — visible whenever any tag exists. */}
+          {tagSummary.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setTagsPopover((v) => !v)}
+                className={`px-1.5 h-6 flex items-center gap-1 rounded text-[11px] transition-colors border ${
+                  tagsPopover
+                    ? 'bg-zinc-700 text-zinc-100 border-zinc-600'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                }`}
+                title={t('label_filter_tags_popover')}
+              >
+                {t('label_filter_tags_popover')}
+                <span className="flex gap-0.5">
+                  {tagSummary.map((t) => (
+                    <span
+                      key={t.key}
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: t.hex }}
+                    />
+                  ))}
+                </span>
+              </button>
+              {tagsPopover && (
+                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 min-w-[160px]">
+                  {tagSummary.map((tag) => (
+                    <div key={tag.key} className="flex items-center gap-2 py-0.5 text-xs">
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ backgroundColor: tag.hex }}
+                      />
+                      <span className="flex-1 text-zinc-300">{tag.label}</span>
+                      <span className="text-zinc-500 text-[10px]">{tag.count}</span>
+                      <button
+                        onClick={() => clearUnitTagsByColor(tag.key)}
+                        className="text-zinc-500 hover:text-red-400 transition-colors px-1"
+                        title={t('label_filter_clear_color')}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div className="border-t border-zinc-800 mt-1 pt-1">
+                    <button
+                      onClick={() => { clearAllUnitTags(); setTagsPopover(false); }}
+                      className="w-full text-[11px] text-zinc-400 hover:text-red-400 transition-colors text-left"
+                    >
+                      {t('label_filter_clear_all')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           <PlayerSearch
             players={meta.players}

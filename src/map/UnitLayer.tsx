@@ -1,7 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
 import * as mapboxgl from 'maplibre-gl';
 import { UnitPosition, UnitClass, UNIT_CLASS_LABELS, GameEvent, ammoInfo, bandageCount, defaultGameConfig, getMagStateService } from '../lib/api';
-import { registerUnitIcons, iconName } from './unitIcons';
+import { registerUnitIcons, iconName, tagColorHex } from './unitIcons';
+import { transformFilteredName } from '../lib/labelTransform';
 import { useI18n } from '../lib/i18n';
 import { useDirector } from '../store/director';
 import type { FocusMode } from '../store/director';
@@ -241,11 +242,13 @@ function buildAnimatedGeoJson(
         // --- Focus mode visual adjustments ---
         // Quick label filter: non-empty string overrides showUnitLabel and only
         // shows labels for units whose name (case-insensitive) contains it.
-        const filter = (pbFx.labelFilter ?? '').trim().toLowerCase();
+        const filterRaw = (pbFx.labelFilter ?? '').trim();
+        const filter = filterRaw.toLowerCase();
+        const rawName = u.name || `#${u.id}`;
+        const filterMatches = filter ? rawName.toLowerCase().includes(filter) : false;
         let showLabel: number;
         if (filter) {
-          const unitName = (u.name || `#${u.id}`).toLowerCase();
-          showLabel = unitName.includes(filter) ? 1 : 0;
+          showLabel = filterMatches ? 1 : 0;
         } else {
           showLabel = vcState.showUnitLabel ? 1 : 0;
         }
@@ -254,10 +257,21 @@ function buildAnimatedGeoJson(
         if (vcState.deadUnitDisplay === 'hide') {
           deadIconOpacity = 0;
         }
-        let labelText = u.name || `#${u.id}`;
+        // While the filter is active, matching units render the stripped name
+        // (lowercase → drop the filter substring → strip -/_ → trim).
+        let labelText = filterMatches ? transformFilteredName(rawName, filterRaw) : rawName;
         let labelSize = vcState.labelFontSize;
         let labelColor = '#ffffff';   // default label color
         let labelOpacity = 1.0;       // default label opacity
+
+        // --- Persistent color tag (applied via the quick-filter palette) ---
+        // Overrides team icon, forces the saved name to render in the tag color.
+        const tag = pbFx.unitTags?.[u.id];
+        if (tag) {
+          labelText = tag.name || labelText;
+          labelColor = tagColorHex(tag.color);
+          showLabel = 1;
+        }
         if (focus?.active) {
           if (u.id === focus.focusUnitId) {
             // ★ Focus unit (the killer): gold glow, full brightness, name visible
@@ -325,8 +339,8 @@ function buildAnimatedGeoJson(
             labelSize,
             labelColor,
             labelOpacity,
-            iconAlive: iconName(u.team, cls, false, displayHP),
-            iconDead: iconName(u.team, cls, true, 0),
+            iconAlive: iconName(u.team, cls, false, displayHP, tag?.color),
+            iconDead: iconName(u.team, cls, true, 0, tag?.color),
           },
         };
       }),
@@ -852,9 +866,10 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
     } catch { /* ignore */ }
   }, [map, selectionRing]);
 
-  // Force a label re-evaluation when the quick filter changes, even if the
-  // animation loop is currently idle (e.g. playback paused).
+  // Force a label/tag re-evaluation when the quick filter or tag map changes,
+  // even if the animation loop is currently idle (e.g. playback paused).
   const labelFilter = usePlayback(s => s.labelFilter);
+  const unitTags = usePlayback(s => s.unitTags);
   useEffect(() => {
     try {
       const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
@@ -870,7 +885,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
         ),
       );
     } catch { /* ignore */ }
-  }, [map, labelFilter]);
+  }, [map, labelFilter, unitTags]);
 
   return null;
 }

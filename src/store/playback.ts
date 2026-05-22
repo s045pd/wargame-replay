@@ -91,6 +91,8 @@ interface PlaybackState {
   manualFollow: boolean;
   /** Quick name filter — non-empty hides labels of non-matching units. Transient. */
   labelFilter: string;
+  /** Per-unit color tags applied from the quick-filter palette. Transient. */
+  unitTags: Record<number, { color: string; name: string }>;
   /** True while a clip is being recorded — auto-director must yield. */
   isRecording: boolean;
 
@@ -126,6 +128,9 @@ interface PlaybackState {
   setFollowSelectedUnit: (follow: boolean) => void;
   setManualFollow: (manual: boolean) => void;
   setLabelFilter: (text: string) => void;
+  setUnitTagsBatch: (patch: Record<number, { color: string; name: string }>) => void;
+  clearUnitTagsByColor: (color: string) => void;
+  clearAllUnitTags: () => void;
   setIsRecording: (recording: boolean) => void;
   setKillLineEnabled: (enabled: boolean) => void;
   setHitLineEnabled: (enabled: boolean) => void;
@@ -199,6 +204,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   followSelectedUnit: false,
   manualFollow: false,
   labelFilter: '',
+  unitTags: {},
   isRecording: false,
   killLineEnabled: _prefs.killLineEnabled ?? true,
   hitLineEnabled: _prefs.hitLineEnabled ?? true,
@@ -356,6 +362,15 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   },
   setSelectedUnitId: (id) => set(id === null ? { selectedUnitId: null, manualFollow: false } : { selectedUnitId: id }),
   setLabelFilter: (text) => set({ labelFilter: text }),
+  setUnitTagsBatch: (patch) => set((state) => ({ unitTags: { ...state.unitTags, ...patch } })),
+  clearUnitTagsByColor: (color) => set((state) => {
+    const next: Record<number, { color: string; name: string }> = {};
+    for (const [id, tag] of Object.entries(state.unitTags)) {
+      if (tag.color !== color) next[Number(id)] = tag;
+    }
+    return { unitTags: next };
+  }),
+  clearAllUnitTags: () => set({ unitTags: {} }),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),
   setManualFollow: (manual) => set({ manualFollow: manual }),
   setIsRecording: (recording) => set({ isRecording: recording }),

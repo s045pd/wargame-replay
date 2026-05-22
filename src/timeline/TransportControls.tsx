@@ -1,6 +1,7 @@
 import { Play, Pause, SkipForward, SkipBack, ChevronDown } from 'lucide-react';
 import { usePlayback } from '../store/playback';
 import { useDirector } from '../store/director';
+import { useVisualConfig } from '../store/visualConfig';
 import { useI18n } from '../lib/i18n';
 
 const SPEEDS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512] as const;
@@ -50,6 +51,8 @@ export function TransportControls() {
     bombardSlowDiv, setBombardSlowDiv,
   } = usePlayback();
   const { focusDarkMap, toggleFocusDarkMap } = useDirector();
+  const showUnitLabel = useVisualConfig((s) => s.showUnitLabel);
+  const setVc = useVisualConfig((s) => s.set);
   const { t } = useI18n();
 
   const handleSkip = (delta: number) => {
@@ -212,6 +215,17 @@ export function TransportControls() {
         </button>
 
         <div className="h-3 w-px bg-zinc-700/50" />
+
+        {/* Show unit name labels — display toggle, mirrors UnitsTab setting */}
+        <button
+          onClick={() => setVc('showUnitLabel', !showUnitLabel)}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            showUnitLabel ? 'bg-sky-800 text-sky-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={`${t('settings_show_unit_label')} — ${showUnitLabel ? 'ON' : 'OFF'}`}
+        >
+          {t('settings_show_unit_label')}
+        </button>
 
         {/* Focus dark map toggle */}
         <button

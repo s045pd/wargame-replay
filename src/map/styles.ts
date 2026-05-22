@@ -141,7 +141,12 @@ const CARTO_VOYAGER: StyleSpecification = {
  *  ESRI serves native 256px tiles with no @2x variant. tileSize:128 makes
  *  MapLibre request tiles one zoom level higher than with 256, so each
  *  256px image covers only 128 CSS px (= 256 device px on 2× retina)
- *  giving a 1:1 pixel mapping. Trade-off: ~3-4× more tile requests. */
+ *  giving a 1:1 pixel mapping. Trade-off: ~3-4× more tile requests.
+ *  Source maxzoom bumped to 18: most urban/peri-urban areas have native z=18
+ *  imagery and look noticeably sharper; rural/water spots that lack z=18
+ *  fall back to "Map data not yet available" — accept that for cities.
+ *  Layer paint sets raster-resampling:'nearest' so any overzoom past 18
+ *  reads crisp/pixelated instead of bilinear-blurry. */
 const ESRI_SATELLITE: StyleSpecification = {
   version: 8,
   sources: {
@@ -151,11 +156,7 @@ const ESRI_SATELLITE: StyleSpecification = {
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       ],
       tileSize: 128,
-      // ESRI World Imagery often has no tiles beyond z=17 in rural / water areas
-      // (returns the "Map data not yet available" placeholder). Capping the
-      // source maxzoom lets MapLibre overzoom existing tiles instead of
-      // requesting nonexistent ones — looks slightly soft but never empty.
-      maxzoom: 17,
+      maxzoom: 18,
       attribution: '&copy; Esri',
     },
   },
@@ -166,12 +167,18 @@ const ESRI_SATELLITE: StyleSpecification = {
       source: 'esri-satellite',
       minzoom: 0,
       maxzoom: 19,
+      paint: {
+        'raster-resampling': 'nearest',
+      },
     },
   ],
   glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
 };
 
-/** OpenStreetMap standard — the classic free map */
+/** OpenStreetMap standard — the classic free map.
+ *  tileSize:128 retina trick: same as ESRI satellite, forces a zoom-level-up
+ *  request so each 256px tile maps to 128 CSS px = 2× device pixels on hi-DPI.
+ *  Trade-off: ~3-4× more tile requests against the OSM CDN. */
 const OSM_STANDARD: StyleSpecification = {
   version: 8,
   sources: {
@@ -180,7 +187,8 @@ const OSM_STANDARD: StyleSpecification = {
       tiles: [
         'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       ],
-      tileSize: 256,
+      tileSize: 128,
+      maxzoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     },
   },
@@ -196,7 +204,8 @@ const OSM_STANDARD: StyleSpecification = {
   glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
 };
 
-/** OpenTopoMap — topographic map with elevation contours, free */
+/** OpenTopoMap — topographic map with elevation contours, free.
+ *  tileSize:128 retina trick (see OSM_STANDARD/ESRI_SATELLITE). */
 const OPEN_TOPO: StyleSpecification = {
   version: 8,
   sources: {
@@ -207,7 +216,8 @@ const OPEN_TOPO: StyleSpecification = {
         'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
         'https://c.tile.opentopomap.org/{z}/{x}/{y}.png',
       ],
-      tileSize: 256,
+      tileSize: 128,
+      maxzoom: 17,
       attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     },
   },

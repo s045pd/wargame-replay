@@ -104,6 +104,11 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
       center: [30, 20],
       zoom: 1.5,
       preserveDrawingBuffer: true,  // needed for video capture via captureStream()
+      antialias: true,              // sharper lines, 3D edges, and globe silhouette
+      // Force at least 2× rendering on hi-DPI; some browsers/power modes drop
+      // devicePixelRatio to 1.5 and the result looks soft. Costs a bit of GPU
+      // but matches what the unit icons / canvas overlays expect.
+      pixelRatio: Math.max(window.devicePixelRatio || 1, 2),
     } as mapboxgl.MapOptions);
 
     mapRef.current = map;

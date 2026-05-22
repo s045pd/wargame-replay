@@ -44,6 +44,16 @@ export interface POIObject {
   resource: number;
   lat: number;
   lng: number;
+  // Type-specific extended fields (see decodeDT8POIs)
+  health?: number;
+  lives?: number;
+  supplies?: number;
+  redPct?: number;
+  bluePct?: number;
+  buildTimer?: number;
+  heldTime?: number;
+  redHeld?: number;
+  blueHeld?: number;
 }
 
 export interface BombingEvent {

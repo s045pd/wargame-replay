@@ -71,7 +71,14 @@ export function decodePositionFrame(data: Uint8Array): UnitPosition[] {
 }
 
 // ── POI decoding (DataType=8, 31 bytes/entry) ──
-
+//
+// Per-type byte layout (offsets relative to entry start; mirrors Go
+// decoder/position.go:DecodeDT8POIs):
+//   Type 1 (BaseCamp):   [13]=HP (0xFE=invincible), [14:19]=0xFF
+//   Type 2 (兵站/FOB):   [13]=lives, [15]=supplies, [17]=health%, [21:23 LE]=buildTimer(s)
+//   Type 3 (补给站):     [13]=lives, [15]=supplies, [17]=redPct, [18]=bluePct, [23:25 LE]=heldTime(s)
+//   Type 4 (争夺点):     [13]=redPct, [14]=bluePct, [15:17 LE]=redHeld(s), [19:21 LE]=blueHeld(s)
+//   Type 5 (防御点):     [13]=health%, [14:16 LE]=heldTime(s)
 export function decodeDT8POIs(data: Uint8Array): POIObject[] {
   const count = Math.floor(data.length / DT8_ENTRY_SIZE);
   const pois: POIObject[] = [];
@@ -84,14 +91,40 @@ export function decodeDT8POIs(data: Uint8Array): POIObject[] {
     if (rawLat === 0 && rawLng === 0) continue;
     const poiType = data[off + 11]!;
     if (poiType < 1 || poiType > 5) continue;
-    pois.push({
+    const poi: POIObject = {
       id: data[off]!,
       type: poiType,
       team: data[off + 12]!,
       resource: data[off + 13]!,
       lat: rawLat, // raw coords, caller must convert
       lng: rawLng,
-    });
+    };
+    switch (poiType) {
+      case 2: // 兵站
+        poi.lives = data[off + 13]!;
+        poi.supplies = data[off + 15]!;
+        poi.health = data[off + 17]!;
+        poi.buildTimer = view.getUint16(21, true);
+        break;
+      case 3: // 补给站
+        poi.lives = data[off + 13]!;
+        poi.supplies = data[off + 15]!;
+        poi.redPct = data[off + 17]!;
+        poi.bluePct = data[off + 18]!;
+        poi.heldTime = view.getUint16(23, true);
+        break;
+      case 4: // 争夺点
+        poi.redPct = data[off + 13]!;
+        poi.bluePct = data[off + 14]!;
+        poi.redHeld = view.getUint16(15, true);
+        poi.blueHeld = view.getUint16(19, true);
+        break;
+      case 5: // 防御点
+        poi.health = data[off + 13]!;
+        poi.heldTime = view.getUint16(14, true);
+        break;
+    }
+    pois.push(poi);
   }
   return pois;
 }

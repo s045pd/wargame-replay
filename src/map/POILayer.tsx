@@ -38,14 +38,14 @@ function effectiveTeam(poi: POIObject): number {
   return rp > bp ? 0 : 1;
 }
 
-/** Effective radius (metres) per POI type */
+/** Effective radius (metres) per POI type — tightened to match actual gameplay capture radius */
 function poiRadius(type: number): number {
   switch (type) {
-    case 2: return 25;  // 兵站
-    case 3: return 20;  // 补给站
-    case 4: return 25;  // 争夺点
-    case 5: return 30;  // 前哨
-    default: return 20;
+    case 2: return 16;  // 兵站
+    case 3: return 13;  // 补给站
+    case 4: return 16;  // 争夺点
+    case 5: return 20;  // 前哨
+    default: return 13;
   }
 }
 
@@ -180,7 +180,7 @@ export function POILayer({ map, pois }: POILayerProps) {
         source: RANGE_SOURCE_ID,
         paint: {
           'fill-color': ['get', 'color'],
-          'fill-opacity': 0.08,
+          'fill-opacity': 0.22,
         },
       });
 
@@ -190,8 +190,8 @@ export function POILayer({ map, pois }: POILayerProps) {
         source: RANGE_SOURCE_ID,
         paint: {
           'line-color': ['get', 'color'],
-          'line-width': 1.2,
-          'line-opacity': 0.45,
+          'line-width': 1.6,
+          'line-opacity': 0.85,
           'line-dasharray': [4, 3],
         },
       });

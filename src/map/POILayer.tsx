@@ -23,6 +23,21 @@ function teamColor(team: number): string {
   return '#ffaa00';
 }
 
+/**
+ * Effective team for display. For 争夺点 (type 4), the static `team` byte
+ * only flips once a side fully captures the point, so during an active
+ * contest it would render as neutral even though one side is clearly ahead.
+ * Instead, pick the dominant side from redPct / bluePct so the icon, label,
+ * and range circle visibly track the capture progress in real time.
+ */
+function effectiveTeam(poi: POIObject): number {
+  if (poi.type !== 4) return poi.team;
+  const rp = poi.redPct ?? 0;
+  const bp = poi.bluePct ?? 0;
+  if (rp === bp) return poi.team; // both 0 or tied → fall back to static team
+  return rp > bp ? 0 : 1;
+}
+
 /** Effective radius (metres) per POI type */
 function poiRadius(type: number): number {
   switch (type) {
@@ -113,7 +128,8 @@ function buildGeoJson(pois: POIObject[]): GeoJSON.FeatureCollection {
       .filter(poi => poi.type !== 1)
       .map(poi => {
         const iconKey = poiTypeToIconKey(poi.type);
-        const colorKey = poiTeamToColorKey(poi.team);
+        const team = effectiveTeam(poi);
+        const colorKey = poiTeamToColorKey(team);
         return {
           type: 'Feature' as const,
           geometry: {
@@ -123,9 +139,9 @@ function buildGeoJson(pois: POIObject[]): GeoJSON.FeatureCollection {
           properties: {
             id: poi.id,
             poiType: poi.type,
-            team: poi.team,
+            team,
             resource: poi.resource,
-            color: teamColor(poi.team),
+            color: teamColor(team),
             icon: poiIconName(iconKey, colorKey),
             label: resourceLabel(poi),
           },
@@ -140,7 +156,7 @@ function buildRangeGeoJson(pois: POIObject[]): GeoJSON.FeatureCollection {
   for (const poi of pois) {
     if (poi.type === 1 || poi.lat === 0 || poi.lng === 0) continue;
     const circle = geoCircle(poi.lng, poi.lat, poiRadius(poi.type));
-    circle.properties = { color: teamColor(poi.team) };
+    circle.properties = { color: teamColor(effectiveTeam(poi)) };
     features.push(circle);
   }
   return { type: 'FeatureCollection', features };

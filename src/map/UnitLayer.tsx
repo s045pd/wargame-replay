@@ -254,7 +254,7 @@ function buildAnimatedGeoJson(
         if (vcState.deadUnitDisplay === 'hide') {
           deadIconOpacity = 0;
         }
-        let labelText = `${u.name || `#${u.id}`} (${UNIT_CLASS_LABELS[cls]})`;
+        let labelText = u.name || `#${u.id}`;
         let labelSize = vcState.labelFontSize;
         let labelColor = '#ffffff';   // default label color
         let labelOpacity = 1.0;       // default label opacity

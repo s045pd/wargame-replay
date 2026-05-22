@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import type * as mapboxgl from 'maplibre-gl';
 import type { HotspotEvent } from '../lib/api';
 import { useVisualConfig } from '../store/visualConfig';
+import { usePlayback } from '../store/playback';
 
 interface SniperTracerLayerProps {
   map: mapboxgl.Map;
@@ -168,9 +169,14 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
 
     const animate = () => {
       const vc = useVisualConfig.getState();
+      const playSpeed = Math.max(1, usePlayback.getState().speed || 1);
       const baseDurMs = (vc.tracerDuration * 1000) || DEFAULT_TRACER_DURATION_MS;
-      // tracerSpeed multiplier: higher = faster travel = shorter duration
-      const tracerDurMs = baseDurMs / Math.max(vc.tracerSpeed, 0.1);
+      // tracerSpeed multiplier: higher = faster travel = shorter duration.
+      // Also divide by playback speed so the bullet head meets the victim
+      // icon at the (game-time) impact moment instead of drifting behind it
+      // when fast-forwarding. 80ms floor keeps it visible at extreme speeds.
+      const rawDurMs = baseDurMs / Math.max(vc.tracerSpeed, 0.1) / playSpeed;
+      const tracerDurMs = Math.max(80, rawDurMs);
       // Linger: line stays visible after bullet arrives, then fades
       const lingerMs = tracerDurMs * 1.5 || DEFAULT_LINGER_MS;
       const glowMultiplier = vc.tracerGlow;

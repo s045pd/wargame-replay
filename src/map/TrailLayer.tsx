@@ -317,10 +317,19 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
     const focusRelatedSet = new Set<number>(focusMode?.relatedUnitIds);
     const focusUnitId = focusMode?.focusUnitId ?? -1;
 
-    const { killLineEnabled, hitLineEnabled } = usePlayback.getState();
+    const { killLineEnabled, hitLineEnabled, speed: playSpeed } = usePlayback.getState();
     const vcDur = useVisualConfig.getState();
-    const killDurMs = vcDur.killLineDuration * 1000;
-    const hitDurMs = vcDur.hitLineDuration * 1000;
+    // Compress wall-clock tracer duration as playback speeds up so the head/
+    // tail still line up with the icons (which themselves move 1:1 with game
+    // time). Keep an 80ms floor — anything shorter is sub-frame and invisible.
+    const MIN_TRACER_MS = 80;
+    const speedScale = Math.max(1, playSpeed || 1);
+    const killDurMs = Math.max(MIN_TRACER_MS, (vcDur.killLineDuration * 1000) / speedScale);
+    const hitDurMs = Math.max(MIN_TRACER_MS, (vcDur.hitLineDuration * 1000) / speedScale);
+    // Shrink the inter-tracer stagger by the same factor; at 64× the original
+    // 60ms gap covers 3.8s of game time which puts later tracers way out of
+    // sync with their events.
+    const staggerMs = Math.max(2, 60 / speedScale);
 
     for (const ev of events) {
       if (ev.type !== 'hit' && ev.type !== 'kill') continue;
@@ -353,7 +362,7 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
         dstLat: dstPos.lat,
         isKill: ev.type === 'kill',
         isFollowed,
-        startTime: now + addedCount * 60,
+        startTime: now + addedCount * staggerMs,
         durationMs: ev.type === 'kill' ? killDurMs : hitDurMs,
         focusDim,
       });

@@ -19,7 +19,7 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
     meta, coordMode, mapStyle, setMapStyle, tiltMode, toggleTiltMode,
     resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow,
     labelFilter, setLabelFilter,
-    unitTags, setUnitTagsBatch, clearUnitTagsByColor, clearAllUnitTags,
+    unitTags, setUnitTagsBatch, clearUnitTagsByGroup, clearAllUnitTags,
   } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
@@ -50,23 +50,33 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
       .map(p => ({ id: p.id, name: p.name }));
   }, [labelFilter, meta]);
 
-  // Active tag colors with their unit counts — for the tags popover.
-  const tagSummary = useMemo(() => {
-    const counts: Record<string, number> = {};
+  // Active tag groups — one row per (color, filter) combination so the user
+  // can see which filter word produced each batch and clear them individually.
+  const tagGroups = useMemo(() => {
+    const groups = new Map<string, { color: string; filter: string; count: number }>();
     for (const tag of Object.values(unitTags)) {
-      counts[tag.color] = (counts[tag.color] ?? 0) + 1;
+      const key = `${tag.color}|${tag.filter}`;
+      const existing = groups.get(key);
+      if (existing) existing.count++;
+      else groups.set(key, { color: tag.color, filter: tag.filter, count: 1 });
     }
-    return TAG_COLORS
-      .filter(c => counts[c.key] > 0)
-      .map(c => ({ ...c, count: counts[c.key] }));
+    return Array.from(groups.values()).sort((a, b) => {
+      const ai = TAG_COLORS.findIndex(c => c.key === a.color);
+      const bi = TAG_COLORS.findIndex(c => c.key === b.color);
+      return ai - bi || a.filter.localeCompare(b.filter);
+    });
   }, [unitTags]);
 
   const applyTagToMatches = (colorKey: string) => {
     if (filterMatches.length === 0) return;
-    const patch: Record<number, { color: string; name: string }> = {};
+    const patch: Record<number, { color: string; name: string; filter: string }> = {};
     const f = labelFilter.trim();
     for (const m of filterMatches) {
-      patch[m.id] = { color: colorKey, name: transformFilteredName(m.name, f) || m.name };
+      patch[m.id] = {
+        color: colorKey,
+        name: transformFilteredName(m.name, f) || m.name,
+        filter: f,
+      };
     }
     setUnitTagsBatch(patch);
     setLabelFilter('');
@@ -158,7 +168,7 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
             </div>
           )}
           {/* Tags summary popover — visible whenever any tag exists. */}
-          {tagSummary.length > 0 && (
+          {tagGroups.length > 0 && (
             <div className="relative">
               <button
                 onClick={() => setTagsPopover((v) => !v)}
@@ -171,34 +181,39 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
               >
                 {t('label_filter_tags_popover')}
                 <span className="flex gap-0.5">
-                  {tagSummary.map((t) => (
+                  {tagGroups.map((g) => (
                     <span
-                      key={t.key}
+                      key={`${g.color}|${g.filter}`}
                       className="w-1.5 h-1.5 rounded-full"
-                      style={{ backgroundColor: t.hex }}
+                      style={{ backgroundColor: TAG_COLORS.find(c => c.key === g.color)?.hex ?? '#888' }}
                     />
                   ))}
                 </span>
               </button>
               {tagsPopover && (
-                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 min-w-[160px]">
-                  {tagSummary.map((tag) => (
-                    <div key={tag.key} className="flex items-center gap-2 py-0.5 text-xs">
-                      <span
-                        className="w-3 h-3 rounded-full shrink-0"
-                        style={{ backgroundColor: tag.hex }}
-                      />
-                      <span className="flex-1 text-zinc-300">{tag.label}</span>
-                      <span className="text-zinc-500 text-[10px]">{tag.count}</span>
-                      <button
-                        onClick={() => clearUnitTagsByColor(tag.key)}
-                        className="text-zinc-500 hover:text-red-400 transition-colors px-1"
-                        title={t('label_filter_clear_color')}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
+                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 min-w-[200px]">
+                  {tagGroups.map((g) => {
+                    const meta = TAG_COLORS.find(c => c.key === g.color);
+                    return (
+                      <div key={`${g.color}|${g.filter}`} className="flex items-center gap-2 py-0.5 text-xs">
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: meta?.hex ?? '#888' }}
+                        />
+                        <span className="font-mono text-zinc-300 truncate flex-1" title={g.filter || '(empty filter)'}>
+                          {g.filter || '—'}
+                        </span>
+                        <span className="text-zinc-500 text-[10px]">{g.count}</span>
+                        <button
+                          onClick={() => clearUnitTagsByGroup(g.color, g.filter)}
+                          className="text-zinc-500 hover:text-red-400 transition-colors px-1"
+                          title={t('label_filter_clear_color')}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
                   <div className="border-t border-zinc-800 mt-1 pt-1">
                     <button
                       onClick={() => { clearAllUnitTags(); setTagsPopover(false); }}

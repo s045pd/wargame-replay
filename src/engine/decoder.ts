@@ -3,6 +3,7 @@
 import type { UnitPosition, GameEvent, POIObject, BombingEvent, BaseCamp, Minefield } from './types';
 import type { CoordResolver } from './coords';
 import type { Database } from 'sql.js';
+import { decodeAmmoConfigBlocks, type AmmoConfigBlock } from '../lib/gameConfig';
 
 const ENTRY_SIZE = 15;
 const DT8_ENTRY_SIZE = 31;
@@ -293,6 +294,26 @@ export function loadScoreUpdates(db: Database): GameEvent[] {
   }
   stmt.free();
   return events;
+}
+
+// ── Ammo / weapon config block (SrcType=64, DataType=7) ──
+//
+// DT=7 is an append-only config blob: every time a new weapon entry is added,
+// the row grows by 16 bytes. The longest record is the most-complete snapshot.
+// Each 16-byte block has type=byte[1]; type=2 carries main-weapon ammo
+// (magSize at byte[6-7], total at byte[8-9]). See lib/gameConfig.ts for the
+// full block-binding heuristic.
+export function loadAmmoConfigBlocks(db: Database): AmmoConfigBlock[] {
+  const stmt = db.prepare(`
+    SELECT LogData FROM record
+    WHERE SrcType=64 AND DataType=7 AND LogData IS NOT NULL
+    ORDER BY length(LogData) DESC LIMIT 1
+  `);
+  if (!stmt.step()) { stmt.free(); return []; }
+  const blob = stmt.get()[0] as Uint8Array | null;
+  stmt.free();
+  if (!blob) return [];
+  return decodeAmmoConfigBlocks(blob);
 }
 
 // ── Player roster (tag table) ──

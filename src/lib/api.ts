@@ -1,5 +1,13 @@
 const BASE = '';
 
+// Re-export dynamic per-match config (see lib/gameConfig.ts for details).
+export type { GameConfig, AmmoConfig, AmmoInfo, AmmoConfigBlock } from './gameConfig';
+export { ammoInfo, bandageCount, defaultGameConfig } from './gameConfig';
+
+// Re-export magazine state tracker (see lib/magState.ts).
+export type { MagState } from './magState';
+export { getMagStateService } from './magState';
+
 export interface GameInfo {
   id: string;
   session: string;
@@ -74,6 +82,8 @@ export interface GameMeta {
   graticule?: Graticule;
   bombingEvents?: BombingEvent[];
   minefields?: Minefield[];
+  /** Per-match dynamic configuration inferred from the .db itself. */
+  gameConfig?: import('./gameConfig').GameConfig;
 }
 
 export type UnitClass = 'rifle' | 'mg' | 'medic' | 'marksman' | 'sniper';

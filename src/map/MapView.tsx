@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import * as mapboxgl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { UnitPosition, ammoPercent } from '../lib/api';
+import { UnitPosition, ammoInfo, bandageCount, defaultGameConfig, getMagStateService } from '../lib/api';
 import { UnitLayer } from './UnitLayer';
 import { TrailLayer } from './TrailLayer';
 import { BaseCampLayer } from './BaseCampLayer';
@@ -664,30 +664,41 @@ export function MapView({ units, targetCamera: targetCameraProp, immersive = fal
                   <span className="text-zinc-400 w-6 text-right">{selectedUnit.hp}</span>
                 </div>
               </div>
-              {/* Ammo bar (class-aware percentage) */}
-              <div className="mb-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-zinc-500 w-6">{t('ammo')}</span>
-                  <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
-                    {(() => { const pct = ammoPercent(selectedUnit.ammo, selectedUnit.class); return (
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: pct > 40 ? '#3b82f6' : pct > 15 ? '#eab308' : '#ef4444',
-                      }}
-                    />
-                    ); })()}
-                  </div>
-                  <span className="text-zinc-400 w-8 text-right text-[11px]">{Math.round(ammoPercent(selectedUnit.ammo, selectedUnit.class))}%</span>
-                </div>
-              </div>
-              {/* Supply + Bandage + Revival tokens inline */}
-              <div className="flex items-center gap-3 mb-1 text-zinc-400">
-                <span><span className="text-zinc-500">{t('supply')}</span> {selectedUnit.supply}</span>
-                <span><span className="text-zinc-500">{t('bandage')}</span> {selectedUnit.bandage ?? 0}</span>
-                <span><span className="text-zinc-500">{t('revival_tokens')}</span> {selectedUnit.revivalTokens}</span>
-              </div>
+              {/* Ammo bar (dynamic per-match config: chambered mag / reserve) */}
+              {(() => {
+                const cfg = meta?.gameConfig ?? defaultGameConfig();
+                const info = ammoInfo(selectedUnit.ammo, selectedUnit.class, cfg);
+                const bandages = bandageCount(selectedUnit.bandage, selectedUnit.class, cfg);
+                const mag = getMagStateService().peek(selectedUnit.id);
+                const magText = mag
+                  ? `${mag.currentMag}/${mag.reserve}` // 当前弹夹 / 备弹
+                  : `${info.bullets}/${info.total}`;   // fallback to total/total before first sample
+                return (
+                  <>
+                    <div className="mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-zinc-500 w-6">{t('ammo')}</span>
+                        <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{
+                              width: `${info.percent}%`,
+                              backgroundColor: info.percent > 40 ? '#3b82f6' : info.percent > 15 ? '#eab308' : '#ef4444',
+                            }}
+                          />
+                        </div>
+                        <span className="text-zinc-400 text-right text-[11px] tabular-nums" title={`${info.bullets}/${info.total} 总弹`}>{magText}</span>
+                      </div>
+                    </div>
+                    {/* Supply + Bandage + Revival tokens inline */}
+                    <div className="flex items-center gap-3 mb-1 text-zinc-400">
+                      <span><span className="text-zinc-500">{t('supply')}</span> {selectedUnit.supply}</span>
+                      <span><span className="text-zinc-500">{t('bandage')}</span> {bandages < 0 ? '∞' : `${bandages}/${cfg.bandageCount}`}</span>
+                      <span><span className="text-zinc-500">{t('revival_tokens')}</span> {selectedUnit.revivalTokens}/{cfg.reviveCountMax}</span>
+                    </div>
+                  </>
+                );
+              })()}
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {

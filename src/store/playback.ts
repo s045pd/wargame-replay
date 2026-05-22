@@ -6,6 +6,7 @@ import type { GameMeta, GameEvent, UnitPosition, POIObject, HotspotEvent, Frame 
 import type { MapStyleKey } from '../map/styles';
 import { useVisualConfig } from './visualConfig';
 import { EngineBridge } from '../engine/bridge';
+import { getMagStateService, resetMagStateService } from '../lib/magState';
 
 // ── LocalStorage persistence for user preferences ──
 const LS_KEY = 'wargame-prefs';
@@ -134,8 +135,20 @@ interface PlaybackState {
   setBombardSlowDiv: (div: number) => void;
 }
 
-/** Apply a frame to the store. */
-function applyFrame(frame: Frame, set: (partial: Partial<PlaybackState>) => void) {
+/** Apply a frame to the store, updating per-unit magazine state. */
+function applyFrame(
+  frame: Frame,
+  meta: GameMeta | null,
+  set: (partial: Partial<PlaybackState>) => void,
+) {
+  // Drive the magazine state machine forward — one update per unit per frame.
+  const cfg = meta?.gameConfig;
+  if (cfg) {
+    const svc = getMagStateService();
+    for (const u of frame.units) {
+      if (u.alive) svc.update(u.id, u.ammo, u.class, cfg);
+    }
+  }
   set({
     currentTs: frame.ts,
     units: frame.units,
@@ -217,6 +230,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     const { _tickTimer, bridge } = get();
     if (_tickTimer) clearInterval(_tickTimer);
     bridge?.dispose();
+    resetMagStateService();
     set({
       gameId: null,
       meta: null,
@@ -276,7 +290,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
         } else {
           frame = await st.bridge.getFrame(nextTs);
         }
-        applyFrame(frame, set);
+        applyFrame(frame, get().meta, set);
         set({ _tsIndex: nextIdx, _prevTs: nextTs });
       } catch {
         // Skip frame on error
@@ -302,11 +316,16 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     const actualTs = state._timestamps[idx];
     if (!actualTs) return;
 
+    // Mag-state tracker is forward-only — clear it on seek so it re-initializes
+    // from the next frame. UI shows "approximate" mag breakdown right after
+    // a seek; accuracy converges within a few subsequent frames.
+    resetMagStateService();
+
     set({ currentTs: actualTs, _tsIndex: idx, _prevTs: actualTs });
 
     try {
       const frame = await state.bridge.getFrame(actualTs);
-      applyFrame(frame, set);
+      applyFrame(frame, state.meta, set);
     } catch {
       // ignore
     }

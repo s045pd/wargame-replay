@@ -11,8 +11,10 @@ import { TimeIndex } from './timeindex';
 import {
   decodePositionFrame, decodeDT8POIs, loadHitEvents,
   loadBombingEvents, loadMinefields, computeBaseCamps, loadPlayers,
+  loadAmmoConfigBlocks,
 } from './decoder';
 import { detectHotspotEvents } from './hotspot';
+import { inferGameConfig } from '../lib/gameConfig';
 
 interface HpEntry { ts: string; hp: number }
 
@@ -132,6 +134,11 @@ export class GameService {
     // Minefield zones
     const minefields = loadMinefields(db, resolver);
     if (minefields.length) meta.minefields = minefields;
+
+    // Per-match dynamic config (ammo / bandage / revive) inferred from .db
+    onProgress?.('Inferring game config...', 35);
+    const ammoBlocks = loadAmmoConfigBlocks(db);
+    meta.gameConfig = inferGameConfig(db, ammoBlocks);
 
     // Hit events + HP timeline
     onProgress?.('Loading combat events...', 40);

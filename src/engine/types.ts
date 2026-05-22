@@ -1,5 +1,7 @@
 // ── Data types ported from Go decoder/types.go + game/service.go + hotspot/engine.go ──
 
+import type { GameConfig } from '../lib/gameConfig';
+
 export type UnitClass = 'rifle' | 'mg' | 'medic' | 'marksman' | 'sniper';
 
 export interface UnitPosition {
@@ -109,6 +111,8 @@ export interface GameMeta {
   graticule?: Graticule;
   bombingEvents?: BombingEvent[];
   minefields?: Minefield[];
+  /** Per-match dynamic configuration inferred from the .db itself. */
+  gameConfig?: GameConfig;
 }
 
 export interface Minefield {

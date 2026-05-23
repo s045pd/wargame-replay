@@ -63,6 +63,10 @@ export const VISUAL_DEFAULTS = {
   tracerTrailLength: 35,
   tracerGlow: 0.2,
   tracerDuration: 1.1,
+  /** When true, kill/hit/sniper tracer wall-clock duration is divided by
+   *  playback speed so endpoints stay aligned with the moving unit icons.
+   *  Off → tracer always uses its configured wall-clock duration. */
+  tracerRealtime: true,
 
   // Playback additions
   defaultSpeed: 64,

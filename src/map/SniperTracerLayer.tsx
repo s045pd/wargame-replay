@@ -169,12 +169,15 @@ export function SniperTracerLayer({ map, hotspots, currentTs }: SniperTracerLaye
 
     const animate = () => {
       const vc = useVisualConfig.getState();
-      const playSpeed = Math.max(1, usePlayback.getState().speed || 1);
+      // Match TrailLayer: when `tracerRealtime` is on, divide by current
+      // playback speed so the bullet head reaches the victim icon at the
+      // game-time impact moment instead of drifting behind. 80ms floor keeps
+      // it visible at extreme speeds.
+      const playSpeed = vc.tracerRealtime
+        ? Math.max(1, usePlayback.getState().speed || 1)
+        : 1;
       const baseDurMs = (vc.tracerDuration * 1000) || DEFAULT_TRACER_DURATION_MS;
       // tracerSpeed multiplier: higher = faster travel = shorter duration.
-      // Also divide by playback speed so the bullet head meets the victim
-      // icon at the (game-time) impact moment instead of drifting behind it
-      // when fast-forwarding. 80ms floor keeps it visible at extreme speeds.
       const rawDurMs = baseDurMs / Math.max(vc.tracerSpeed, 0.1) / playSpeed;
       const tracerDurMs = Math.max(80, rawDurMs);
       // Linger: line stays visible after bullet arrives, then fades

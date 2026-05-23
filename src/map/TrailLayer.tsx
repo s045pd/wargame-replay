@@ -319,16 +319,16 @@ export function TrailLayer({ map, units, trailEnabled, events, selectedUnitId, f
 
     const { killLineEnabled, hitLineEnabled, speed: playSpeed } = usePlayback.getState();
     const vcDur = useVisualConfig.getState();
-    // Compress wall-clock tracer duration as playback speeds up so the head/
-    // tail still line up with the icons (which themselves move 1:1 with game
-    // time). Keep an 80ms floor — anything shorter is sub-frame and invisible.
+    // When `tracerRealtime` is on, compress wall-clock tracer duration as
+    // playback speeds up so head/tail line up with the icons (which move 1:1
+    // with game time). 80ms floor keeps it visible at extreme speeds.
+    // Off → tracer plays at its configured wall-clock duration regardless.
     const MIN_TRACER_MS = 80;
-    const speedScale = Math.max(1, playSpeed || 1);
+    const speedScale = vcDur.tracerRealtime ? Math.max(1, playSpeed || 1) : 1;
     const killDurMs = Math.max(MIN_TRACER_MS, (vcDur.killLineDuration * 1000) / speedScale);
     const hitDurMs = Math.max(MIN_TRACER_MS, (vcDur.hitLineDuration * 1000) / speedScale);
-    // Shrink the inter-tracer stagger by the same factor; at 64× the original
-    // 60ms gap covers 3.8s of game time which puts later tracers way out of
-    // sync with their events.
+    // Shrink the inter-tracer stagger by the same factor when realtime is on
+    // so a 64× batch doesn't smear the staggered start times across seconds.
     const staggerMs = Math.max(2, 60 / speedScale);
 
     for (const ev of events) {

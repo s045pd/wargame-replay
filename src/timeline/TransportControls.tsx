@@ -52,6 +52,7 @@ export function TransportControls() {
   } = usePlayback();
   const { focusDarkMap, toggleFocusDarkMap } = useDirector();
   const showUnitLabel = useVisualConfig((s) => s.showUnitLabel);
+  const tracerRealtime = useVisualConfig((s) => s.tracerRealtime);
   const setVc = useVisualConfig((s) => s.set);
   const { t } = useI18n();
 
@@ -169,6 +170,21 @@ export function TransportControls() {
           title={!trailEnabled ? `${t('fx_hit_line')} — ${t('fx_trail')} OFF` : `${t('fx_hit_line')} — ${hitLineEnabled ? 'ON' : 'OFF'}`}
         >
           {t('fx_hit_line')}
+        </button>
+        {/* Tracer realtime — scales tracer wall-clock by playback speed so the
+            ends stay glued to the moving icons. Subordinate to trail. */}
+        <button
+          onClick={() => { if (trailEnabled) setVc('tracerRealtime', !tracerRealtime); }}
+          className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+            !trailEnabled
+              ? 'bg-zinc-800/50 text-zinc-700 cursor-not-allowed'
+              : tracerRealtime
+                ? 'bg-sky-800 text-sky-200'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-500'
+          }`}
+          title={!trailEnabled ? `${t('fx_tracer_realtime')} — ${t('fx_trail')} OFF` : `${t('fx_tracer_realtime')} — ${tracerRealtime ? 'ON' : 'OFF'}`}
+        >
+          {t('fx_tracer_realtime')}
         </button>
 
         <div className="h-3 w-px bg-zinc-700/50" />

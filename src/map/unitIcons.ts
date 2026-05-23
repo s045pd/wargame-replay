@@ -246,8 +246,8 @@ export function iconName(team: string, cls: UnitClass, dead = false, hp = 100, t
   return `unit-${team}-${cls}-hp${level}`;
 }
 
-/** Palette of quick-tag colors. Keep short — each color registers
- *  5 classes × 2 (alive/dead) extra icons. */
+/** Palette of quick-tag preset colors. Custom user-picked colors are
+ *  registered at runtime via `registerTagColorIcons`. */
 export const TAG_COLORS: { key: string; hex: string; label: string }[] = [
   { key: 'purple', hex: '#a855f7', label: '紫' },
   { key: 'orange', hex: '#f97316', label: '橙' },
@@ -257,8 +257,33 @@ export const TAG_COLORS: { key: string; hex: string; label: string }[] = [
   { key: 'cyan',   hex: '#06b6d4', label: '青' },
 ];
 
-export function tagColorHex(key: string): string {
+/** Resolve a tag colour key to its hex. Falls back to white when the key
+ *  is custom and the caller didn't pass an explicit hex. */
+export function tagColorHex(key: string, customHex?: string): string {
+  if (customHex) return customHex;
   return TAG_COLORS.find(c => c.key === key)?.hex ?? '#ffffff';
+}
+
+/** Register the 5-class alive + dead icon variants for one tag color.
+ *  Idempotent — re-running with the same key/hex hot-swaps the icons. */
+export function registerTagColorIcons(map: mapboxgl.Map, key: string, hex: string, size = DEFAULT_CONFIG.size): void {
+  const fill = hex;
+  const stroke = lighten(fill);
+  const deadFill = darken(fill);
+  const deadStroke = lighten(deadFill);
+  const classes: UnitClass[] = ['rifle', 'mg', 'medic', 'marksman', 'sniper'];
+  for (const cls of classes) {
+    const drawFn = DRAW_MAP[cls];
+    const aliveId = `unit-tag-${key}-${cls}`;
+    const aliveImg = createDeadIcon(drawFn, fill, stroke, size);
+    if (map.hasImage(aliveId)) map.updateImage(aliveId, aliveImg);
+    else map.addImage(aliveId, aliveImg, { pixelRatio: 2 });
+
+    const deadId = `unit-tag-${key}-${cls}-dead`;
+    const deadImg = createDeadIcon(drawFn, deadFill, deadStroke, size);
+    if (map.hasImage(deadId)) map.updateImage(deadId, deadImg);
+    else map.addImage(deadId, deadImg, { pixelRatio: 2 });
+  }
 }
 
 /**
@@ -332,28 +357,6 @@ export function registerUnitIcons(map: mapboxgl.Map, config?: Partial<IconConfig
 
   // Tag-color icon variants — flat fill (no HP gradient) per class
   for (const tag of TAG_COLORS) {
-    const fill = tag.hex;
-    const stroke = lighten(fill);
-    const deadFill = darken(fill);
-    const deadStroke = lighten(deadFill);
-    for (const cls of classes) {
-      const drawFn = DRAW_MAP[cls];
-
-      const aliveId = `unit-tag-${tag.key}-${cls}`;
-      const aliveImg = createDeadIcon(drawFn, fill, stroke, iconSize); // flat fill at full opacity
-      if (map.hasImage(aliveId)) {
-        map.updateImage(aliveId, aliveImg);
-      } else {
-        map.addImage(aliveId, aliveImg, { pixelRatio: 2 });
-      }
-
-      const deadId = `unit-tag-${tag.key}-${cls}-dead`;
-      const deadImg = createDeadIcon(drawFn, deadFill, deadStroke, iconSize);
-      if (map.hasImage(deadId)) {
-        map.updateImage(deadId, deadImg);
-      } else {
-        map.addImage(deadId, deadImg, { pixelRatio: 2 });
-      }
-    }
+    registerTagColorIcons(map, tag.key, tag.hex, iconSize);
   }
 }

@@ -20,6 +20,7 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
     resetGame, setSelectedUnitId, setFollowSelectedUnit, setManualFollow,
     labelFilter, setLabelFilter,
     unitTags, setUnitTagsBatch, clearUnitTagsByGroup, clearAllUnitTags,
+    customTagColors, recolorTagGroup, registerCustomTagColor,
   } = usePlayback();
   const { mode, setMode } = useDirector();
   const { locale, setLocale, t } = useI18n();
@@ -31,7 +32,16 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
   const [filterOpen, setFilterOpen] = useState(false);
   const [palettePopover, setPalettePopover] = useState(false);
   const [tagsPopover, setTagsPopover] = useState(false);
+  // null = closed; otherwise the (color, filter) group being recolored.
+  const [recolorTarget, setRecolorTarget] = useState<{ color: string; filter: string } | null>(null);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
+  // Hidden <input type="color"> drives both new-tag and recolor flows.
+  const customColorInputRef = useRef<HTMLInputElement | null>(null);
+  const customColorTargetRef = useRef<
+    | { kind: 'apply' }
+    | { kind: 'recolor'; oldColor: string; filter: string }
+    | null
+  >(null);
   useEffect(() => {
     if (filterOpen) filterInputRef.current?.focus();
   }, [filterOpen]);
@@ -82,6 +92,59 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
     setLabelFilter('');
     setPalettePopover(false);
   };
+
+  /** Open the OS color picker for either a new tag or recoloring a group. */
+  const openCustomPicker = (
+    target: { kind: 'apply' } | { kind: 'recolor'; oldColor: string; filter: string },
+  ) => {
+    customColorTargetRef.current = target;
+    customColorInputRef.current?.click();
+  };
+
+  /** Triggered by the hidden <input type="color"> change event. */
+  const handleCustomColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const hex = e.target.value;
+    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+    const key = `custom-${hex.slice(1).toLowerCase()}`;
+    registerCustomTagColor(key, hex);
+    const target = customColorTargetRef.current;
+    customColorTargetRef.current = null;
+    if (!target) return;
+    if (target.kind === 'apply') {
+      applyTagToMatches(key);
+    } else {
+      recolorTagGroup(target.oldColor, target.filter, key);
+      setRecolorTarget(null);
+    }
+  };
+
+  /** Resolve a tag color key to its display hex (preset or custom). */
+  const resolveTagHex = (key: string): string => {
+    return TAG_COLORS.find(c => c.key === key)?.hex ?? customTagColors[key] ?? '#888';
+  };
+
+  /** Render a preset+custom palette popover. `onPick` receives a registered color key. */
+  const renderPalettePopover = (onPick: (colorKey: string) => void, onPickCustom: () => void) => (
+    <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 flex gap-1.5 items-center">
+      {TAG_COLORS.map((c) => (
+        <button
+          key={c.key}
+          onClick={() => onPick(c.key)}
+          className="w-5 h-5 rounded-full border border-zinc-800 hover:scale-110 transition-transform"
+          style={{ backgroundColor: c.hex }}
+          title={c.label}
+        />
+      ))}
+      <div className="w-px h-4 bg-zinc-700" />
+      <button
+        onClick={onPickCustom}
+        className="w-5 h-5 rounded-full border border-zinc-700 bg-gradient-to-br from-pink-500 via-yellow-400 to-cyan-400 hover:scale-110 transition-transform flex items-center justify-center text-[10px] text-zinc-900 font-bold"
+        title={t('label_filter_custom_color')}
+      >
+        +
+      </button>
+    </div>
+  );
 
   return (
     <div className="h-12 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-4">
@@ -152,18 +215,9 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
                 {t('label_filter_tag_with')}
                 <span className="text-zinc-500">{filterMatches.length}</span>
               </button>
-              {palettePopover && filterMatches.length > 0 && (
-                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 flex gap-1.5">
-                  {TAG_COLORS.map((c) => (
-                    <button
-                      key={c.key}
-                      onClick={() => applyTagToMatches(c.key)}
-                      className="w-5 h-5 rounded-full border border-zinc-800 hover:scale-110 transition-transform"
-                      style={{ backgroundColor: c.hex }}
-                      title={`${c.label} · ${filterMatches.length}`}
-                    />
-                  ))}
-                </div>
+              {palettePopover && filterMatches.length > 0 && renderPalettePopover(
+                (key) => applyTagToMatches(key),
+                () => openCustomPicker({ kind: 'apply' }),
               )}
             </div>
           )}
@@ -185,38 +239,46 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
                     <span
                       key={`${g.color}|${g.filter}`}
                       className="w-1.5 h-1.5 rounded-full"
-                      style={{ backgroundColor: TAG_COLORS.find(c => c.key === g.color)?.hex ?? '#888' }}
+                      style={{ backgroundColor: resolveTagHex(g.color) }}
                     />
                   ))}
                 </span>
               </button>
               {tagsPopover && (
-                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 min-w-[200px]">
+                <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 min-w-[220px]">
                   {tagGroups.map((g) => {
-                    const meta = TAG_COLORS.find(c => c.key === g.color);
+                    const isRecoloring = recolorTarget && recolorTarget.color === g.color && recolorTarget.filter === g.filter;
                     return (
-                      <div key={`${g.color}|${g.filter}`} className="flex items-center gap-2 py-0.5 text-xs">
-                        <span
-                          className="w-3 h-3 rounded-full shrink-0"
-                          style={{ backgroundColor: meta?.hex ?? '#888' }}
-                        />
-                        <span className="font-mono text-zinc-300 truncate flex-1" title={g.filter || '(empty filter)'}>
-                          {g.filter || '—'}
-                        </span>
-                        <span className="text-zinc-500 text-[10px]">{g.count}</span>
-                        <button
-                          onClick={() => clearUnitTagsByGroup(g.color, g.filter)}
-                          className="text-zinc-500 hover:text-red-400 transition-colors px-1"
-                          title={t('label_filter_clear_color')}
-                        >
-                          ×
-                        </button>
+                      <div key={`${g.color}|${g.filter}`} className="relative">
+                        <div className="flex items-center gap-2 py-0.5 text-xs">
+                          <button
+                            onClick={() => setRecolorTarget(isRecoloring ? null : { color: g.color, filter: g.filter })}
+                            className="w-3 h-3 rounded-full shrink-0 ring-offset-1 ring-offset-zinc-900 hover:ring-1 hover:ring-zinc-400 transition-shadow"
+                            style={{ backgroundColor: resolveTagHex(g.color) }}
+                            title={t('label_filter_recolor')}
+                          />
+                          <span className="font-mono text-zinc-300 truncate flex-1" title={g.filter || '(empty filter)'}>
+                            {g.filter || '—'}
+                          </span>
+                          <span className="text-zinc-500 text-[10px]">{g.count}</span>
+                          <button
+                            onClick={() => clearUnitTagsByGroup(g.color, g.filter)}
+                            className="text-zinc-500 hover:text-red-400 transition-colors px-1"
+                            title={t('label_filter_clear_color')}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        {isRecoloring && renderPalettePopover(
+                          (key) => { recolorTagGroup(g.color, g.filter, key); setRecolorTarget(null); },
+                          () => openCustomPicker({ kind: 'recolor', oldColor: g.color, filter: g.filter }),
+                        )}
                       </div>
                     );
                   })}
                   <div className="border-t border-zinc-800 mt-1 pt-1">
                     <button
-                      onClick={() => { clearAllUnitTags(); setTagsPopover(false); }}
+                      onClick={() => { clearAllUnitTags(); setTagsPopover(false); setRecolorTarget(null); }}
                       className="w-full text-[11px] text-zinc-400 hover:text-red-400 transition-colors text-left"
                     >
                       {t('label_filter_clear_all')}
@@ -233,6 +295,13 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
               setFollowSelectedUnit(true);
               setManualFollow(true);
             }}
+          />
+          {/* Hidden native color picker — single instance, retargeted via ref. */}
+          <input
+            ref={customColorInputRef}
+            type="color"
+            className="hidden"
+            onChange={handleCustomColorChange}
           />
         </>
       )}

@@ -134,6 +134,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'label_filter_tags_popover': 'Tags',
     'label_filter_clear_color': 'Clear this color',
     'label_filter_clear_all': 'Clear all tags',
+    'label_filter_custom_color': 'Custom color…',
+    'label_filter_recolor': 'Re-color this group',
 
     // Shortcuts
     'shortcut_help': 'Shortcuts',
@@ -650,6 +652,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'label_filter_tags_popover': '色标',
     'label_filter_clear_color': '清除此色',
     'label_filter_clear_all': '清除全部色标',
+    'label_filter_custom_color': '自定义颜色…',
+    'label_filter_recolor': '改色',
 
     // Shortcuts
     'shortcut_help': '快捷键',

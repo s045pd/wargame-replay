@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import * as mapboxgl from 'maplibre-gl';
 import { UnitPosition, UnitClass, UNIT_CLASS_LABELS, GameEvent, ammoInfo, bandageCount, defaultGameConfig, getMagStateService } from '../lib/api';
-import { registerUnitIcons, iconName, tagColorHex } from './unitIcons';
+import { registerUnitIcons, registerTagColorIcons, iconName, tagColorHex } from './unitIcons';
 import { transformFilteredName } from '../lib/labelTransform';
 import { useI18n } from '../lib/i18n';
 import { useDirector } from '../store/director';
@@ -269,7 +269,7 @@ function buildAnimatedGeoJson(
         const tag = pbFx.unitTags?.[u.id];
         if (tag) {
           labelText = tag.name || labelText;
-          labelColor = tagColorHex(tag.color);
+          labelColor = tagColorHex(tag.color, pbFx.customTagColors?.[tag.color]);
           showLabel = 1;
         }
         if (focus?.active) {
@@ -870,6 +870,13 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
   // even if the animation loop is currently idle (e.g. playback paused).
   const labelFilter = usePlayback(s => s.labelFilter);
   const unitTags = usePlayback(s => s.unitTags);
+  const customTagColors = usePlayback(s => s.customTagColors);
+  // Register icon variants for any custom tag color that's been used.
+  useEffect(() => {
+    for (const [key, hex] of Object.entries(customTagColors)) {
+      try { registerTagColorIcons(map, key, hex); } catch { /* ignore */ }
+    }
+  }, [map, customTagColors]);
   useEffect(() => {
     try {
       const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
@@ -885,7 +892,7 @@ export function UnitLayer({ map, units, selectedUnitId, speed = 1, focusMode, ev
         ),
       );
     } catch { /* ignore */ }
-  }, [map, labelFilter, unitTags]);
+  }, [map, labelFilter, unitTags, customTagColors]);
 
   return null;
 }

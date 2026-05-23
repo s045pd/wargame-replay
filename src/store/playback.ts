@@ -93,6 +93,8 @@ interface PlaybackState {
   labelFilter: string;
   /** Per-unit color tags applied from the quick-filter palette. Transient. */
   unitTags: Record<number, { color: string; name: string; filter: string }>;
+  /** Custom (user-picked) tag colors: key → hex. Presets live in TAG_COLORS. */
+  customTagColors: Record<string, string>;
   /** True while a clip is being recorded — auto-director must yield. */
   isRecording: boolean;
 
@@ -133,6 +135,10 @@ interface PlaybackState {
   /** Drop all unit tags matching a specific (color, filter) batch. */
   clearUnitTagsByGroup: (color: string, filter: string) => void;
   clearAllUnitTags: () => void;
+  /** Recolor every unit currently tagged with (oldColor, filter). */
+  recolorTagGroup: (oldColor: string, filter: string, newColor: string) => void;
+  /** Register or update a custom tag color (hex). Idempotent; safe to call repeatedly. */
+  registerCustomTagColor: (key: string, hex: string) => void;
   setIsRecording: (recording: boolean) => void;
   setKillLineEnabled: (enabled: boolean) => void;
   setHitLineEnabled: (enabled: boolean) => void;
@@ -207,6 +213,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   manualFollow: false,
   labelFilter: '',
   unitTags: {},
+  customTagColors: {},
   isRecording: false,
   killLineEnabled: _prefs.killLineEnabled ?? true,
   hitLineEnabled: _prefs.hitLineEnabled ?? true,
@@ -380,6 +387,20 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     return { unitTags: next };
   }),
   clearAllUnitTags: () => set({ unitTags: {} }),
+  recolorTagGroup: (oldColor, filter, newColor) => set((state) => {
+    const next: Record<number, { color: string; name: string; filter: string }> = {};
+    for (const [id, tag] of Object.entries(state.unitTags)) {
+      if (tag.color === oldColor && tag.filter === filter) {
+        next[Number(id)] = { ...tag, color: newColor };
+      } else {
+        next[Number(id)] = tag;
+      }
+    }
+    return { unitTags: next };
+  }),
+  registerCustomTagColor: (key, hex) => set((state) => ({
+    customTagColors: { ...state.customTagColors, [key]: hex },
+  })),
   setFollowSelectedUnit: (follow) => set(follow ? { followSelectedUnit: true } : { followSelectedUnit: false, manualFollow: false }),
   setManualFollow: (manual) => set({ manualFollow: manual }),
   setIsRecording: (recording) => set({ isRecording: recording }),

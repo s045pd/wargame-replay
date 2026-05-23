@@ -6,7 +6,7 @@ const LS_KEY = 'wargame-visual';
 export const VISUAL_DEFAULTS = {
   // Map
   globeProjection: true,
-  introAnimation: true,
+  introAnimation: false,
   introDuration: 8,
   introPitch: 60,
   introBearing: 180,

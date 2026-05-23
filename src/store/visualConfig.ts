@@ -66,10 +66,10 @@ export const VISUAL_DEFAULTS = {
   /** When true, kill/hit/sniper tracer wall-clock duration is divided by
    *  playback speed so endpoints stay aligned with the moving unit icons.
    *  Off → tracer always uses its configured wall-clock duration. */
-  tracerRealtime: true,
+  tracerRealtime: false,
 
   // Playback additions
-  defaultSpeed: 64,
+  defaultSpeed: 16,
   autoPlay: true,
   focusLockEnabled: false,   // false = lock until hotspot ends naturally; true = cap at focusLockDuration
   focusLockDuration: 6,

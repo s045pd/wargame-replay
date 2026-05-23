@@ -34,14 +34,15 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
   const [tagsPopover, setTagsPopover] = useState(false);
   // null = closed; otherwise the (color, filter) group being recolored.
   const [recolorTarget, setRecolorTarget] = useState<{ color: string; filter: string } | null>(null);
-  const filterInputRef = useRef<HTMLInputElement | null>(null);
-  // Hidden <input type="color"> drives both new-tag and recolor flows.
-  const customColorInputRef = useRef<HTMLInputElement | null>(null);
-  const customColorTargetRef = useRef<
-    | { kind: 'apply' }
-    | { kind: 'recolor'; oldColor: string; filter: string }
+  // Pending custom-color editor — non-null = picker is open. `hex` updates as
+  // the user adjusts the OS color input but isn't applied until they hit
+  // confirm; avoids spamming icon registration + re-renders while picking.
+  const [customPicker, setCustomPicker] = useState<
+    | { kind: 'apply'; hex: string }
+    | { kind: 'recolor'; oldColor: string; filter: string; hex: string }
     | null
   >(null);
+  const filterInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (filterOpen) filterInputRef.current?.focus();
   }, [filterOpen]);
@@ -93,29 +94,36 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
     setPalettePopover(false);
   };
 
-  /** Open the OS color picker for either a new tag or recoloring a group. */
+  /** Open the inline custom-color editor for either a new tag or recoloring a group. */
   const openCustomPicker = (
     target: { kind: 'apply' } | { kind: 'recolor'; oldColor: string; filter: string },
   ) => {
-    customColorTargetRef.current = target;
-    customColorInputRef.current?.click();
+    if (target.kind === 'apply') {
+      setCustomPicker({ kind: 'apply', hex: '#a855f7' });
+    } else {
+      setCustomPicker({
+        kind: 'recolor',
+        oldColor: target.oldColor,
+        filter: target.filter,
+        hex: customTagColors[target.oldColor] ?? TAG_COLORS.find(c => c.key === target.oldColor)?.hex ?? '#a855f7',
+      });
+    }
   };
 
-  /** Triggered by the hidden <input type="color"> change event. */
-  const handleCustomColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const hex = e.target.value;
-    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+  /** Confirm button — registers the picked color and applies/recolors once. */
+  const confirmCustomColor = () => {
+    if (!customPicker) return;
+    const hex = customPicker.hex;
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) { setCustomPicker(null); return; }
     const key = `custom-${hex.slice(1).toLowerCase()}`;
     registerCustomTagColor(key, hex);
-    const target = customColorTargetRef.current;
-    customColorTargetRef.current = null;
-    if (!target) return;
-    if (target.kind === 'apply') {
+    if (customPicker.kind === 'apply') {
       applyTagToMatches(key);
     } else {
-      recolorTagGroup(target.oldColor, target.filter, key);
+      recolorTagGroup(customPicker.oldColor, customPicker.filter, key);
       setRecolorTarget(null);
     }
+    setCustomPicker(null);
   };
 
   /** Resolve a tag color key to its display hex (preset or custom). */
@@ -124,9 +132,13 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
   };
 
   /** Render a preset+custom palette popover. `onPick` receives a registered color key. */
-  const renderPalettePopover = (onPick: (colorKey: string) => void, onPickCustom: () => void) => (
+  const renderPalettePopover = (
+    onPick: (colorKey: string) => void,
+    onPickCustom: () => void,
+    customMode: { hex: string; setHex: (h: string) => void } | null,
+  ) => (
     <div className="absolute top-full left-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded shadow-lg p-2 flex gap-1.5 items-center">
-      {TAG_COLORS.map((c) => (
+      {!customMode && TAG_COLORS.map((c) => (
         <button
           key={c.key}
           onClick={() => onPick(c.key)}
@@ -135,14 +147,45 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
           title={c.label}
         />
       ))}
-      <div className="w-px h-4 bg-zinc-700" />
-      <button
-        onClick={onPickCustom}
-        className="w-5 h-5 rounded-full border border-zinc-700 bg-gradient-to-br from-pink-500 via-yellow-400 to-cyan-400 hover:scale-110 transition-transform flex items-center justify-center text-[10px] text-zinc-900 font-bold"
-        title={t('label_filter_custom_color')}
-      >
-        +
-      </button>
+      {!customMode && <div className="w-px h-4 bg-zinc-700" />}
+      {!customMode && (
+        <button
+          onClick={onPickCustom}
+          className="w-5 h-5 rounded-full border border-zinc-700 bg-gradient-to-br from-pink-500 via-yellow-400 to-cyan-400 hover:scale-110 transition-transform flex items-center justify-center text-[10px] text-zinc-900 font-bold"
+          title={t('label_filter_custom_color')}
+        >
+          +
+        </button>
+      )}
+      {customMode && (
+        <>
+          <input
+            type="color"
+            value={customMode.hex}
+            onChange={(e) => customMode.setHex(e.target.value)}
+            className="w-7 h-6 bg-transparent border border-zinc-700 rounded cursor-pointer"
+          />
+          <span
+            className="w-5 h-5 rounded-full border border-zinc-800"
+            style={{ backgroundColor: customMode.hex }}
+            title={customMode.hex}
+          />
+          <button
+            onClick={confirmCustomColor}
+            className="px-2 h-6 rounded text-[11px] bg-emerald-700 hover:bg-emerald-600 text-white"
+            title={t('label_filter_confirm')}
+          >
+            ✓
+          </button>
+          <button
+            onClick={() => setCustomPicker(null)}
+            className="px-2 h-6 rounded text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-400"
+            title={t('label_filter_cancel')}
+          >
+            ×
+          </button>
+        </>
+      )}
     </div>
   );
 
@@ -218,6 +261,9 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
               {palettePopover && filterMatches.length > 0 && renderPalettePopover(
                 (key) => applyTagToMatches(key),
                 () => openCustomPicker({ kind: 'apply' }),
+                customPicker?.kind === 'apply'
+                  ? { hex: customPicker.hex, setHex: (h) => setCustomPicker({ kind: 'apply', hex: h }) }
+                  : null,
               )}
             </div>
           )}
@@ -272,6 +318,14 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
                         {isRecoloring && renderPalettePopover(
                           (key) => { recolorTagGroup(g.color, g.filter, key); setRecolorTarget(null); },
                           () => openCustomPicker({ kind: 'recolor', oldColor: g.color, filter: g.filter }),
+                          customPicker?.kind === 'recolor'
+                            && customPicker.oldColor === g.color
+                            && customPicker.filter === g.filter
+                            ? {
+                                hex: customPicker.hex,
+                                setHex: (h) => setCustomPicker({ kind: 'recolor', oldColor: g.color, filter: g.filter, hex: h }),
+                              }
+                            : null,
                         )}
                       </div>
                     );
@@ -295,13 +349,6 @@ export function TopBar({ onShowShortcuts, onShowSettings, onToggleClips, clipsOp
               setFollowSelectedUnit(true);
               setManualFollow(true);
             }}
-          />
-          {/* Hidden native color picker — single instance, retargeted via ref. */}
-          <input
-            ref={customColorInputRef}
-            type="color"
-            className="hidden"
-            onChange={handleCustomColorChange}
           />
         </>
       )}

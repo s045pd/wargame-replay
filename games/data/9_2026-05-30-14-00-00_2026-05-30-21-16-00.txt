@@ -1,0 +1,1 @@
+{"OK":true,"Msg":"","CenterOK":true,"CenterLat":31.017029000000008,"CenterLng":114.466231,"MaxNativeZoom":18,"GratCR":5133,"GratLatBegin":31.022875000000006,"GratLatSpace":0.000899,"GratLngBegin":114.455737,"GratLngSpace":0.001049,"ImageOpacity":80,"ImageLat0":31.026936000000006,"ImageLng0":114.45597400000003,"ImageLat1":31.00803099999999,"ImageLng1":114.47612299999997}
